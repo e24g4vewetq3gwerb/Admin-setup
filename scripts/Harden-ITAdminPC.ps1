@@ -162,7 +162,7 @@ try {
       $rp = Add-BitLockerKeyProtector -MountPoint $env:SystemDrive -RecoveryPasswordProtector -ErrorAction SilentlyContinue
       $keyPath = Join-Path (Split-Path $LogPath) 'BitLocker-RecoveryKey.txt'
       "Drive=$($env:SystemDrive)`r`n$(Get-Date)`r`n$($rp | Format-List | Out-String)" | Set-Content -Path $keyPath -Encoding UTF8
-      Write-Log "BitLocker enabled. Recovery info written to $keyPath — STORE OFFLINE." 'WARN'
+      Write-Log "BitLocker enabled. Recovery info written to $keyPath - STORE OFFLINE." 'WARN'
       $results.Add((Get-Status 'BitLocker enable' $true "recovery file: $keyPath"))
     }
   } elseif (-not $on) {
@@ -241,7 +241,7 @@ $results.Add((Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\
 # Network discovery / firewall rules for public: keep default; ensure Public profile not discoverable
 try {
   if ($Apply) {
-    # Prefer Private for Ethernet if domain-less home/admin box — do not force; only document
+    # Prefer Private for Ethernet if domain-less home/admin box - do not force; only document
   }
   $conn = Get-NetConnectionProfile -ErrorAction SilentlyContinue
   $results.Add((Get-Status 'Network profiles reviewed' ($null -ne $conn) (($conn | ForEach-Object { "{0}={1}" -f $_.Name, $_.NetworkCategory }) -join '; ')))
@@ -267,7 +267,7 @@ try {
   $results.Add((Get-Status 'RDP posture' $false $_.Exception.Message))
 }
 
-# WinRM: leave alone unless open — report
+# WinRM: leave alone unless open - report
 try {
   $winrm = Get-Service WinRM -ErrorAction SilentlyContinue
   $results.Add((Get-Status 'WinRM service' ($winrm.Status -ne 'Running') ("Status=$($winrm.Status) StartType=$($winrm.StartType)")))
@@ -306,7 +306,7 @@ if ($CreateStandardUser) {
       $pass = Read-Host "Password for new standard user '$CreateStandardUser'" -AsSecureString
       New-LocalUser -Name $CreateStandardUser -Password $pass -PasswordNeverExpires:$false -UserMayChangePassword:$true | Out-Null
       Add-LocalGroupMember -Group 'Users' -Member $CreateStandardUser -ErrorAction SilentlyContinue
-      $results.Add((Get-Status "Create user $CreateStandardUser" $true 'created in Users group — use this for daily work'))
+      $results.Add((Get-Status "Create user $CreateStandardUser" $true 'created in Users group - use this for daily work'))
     } elseif ($u) {
       $results.Add((Get-Status "Create user $CreateStandardUser" $true 'already exists'))
     } else {
@@ -336,7 +336,7 @@ $manual = @(
   'Separate browser profile for admin vs personal; password manager required',
   'VPN required for remote admin to production',
   'Document asset owner, serial, software inventory, recovery path',
-  'Firmware/BIOS password + Secure Boot already on — verify in firmware UI',
+  'Firmware/BIOS password + Secure Boot already on - verify in firmware UI',
   'Consider HVCI / Credential Guard / ASR rules via org policy after compatibility check'
 )
 foreach ($m in $manual) {
