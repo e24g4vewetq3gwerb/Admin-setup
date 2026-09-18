@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-  One-shot IT admin PC setup: harden + cleanup + Edge/Outlook/Store taskbar removal.
+  One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar dock.
 
 .DESCRIPTION
   Entry point for the admin package. Runs in order:
     1) Harden-ITAdminPC.ps1
     2) Cleanup-Background.ps1
     3) Unpin-And-Remove-OEM.ps1 (also invoked from Cleanup on -Apply)
+    4) Minimal-Taskbar.ps1 (Chrome / Cursor / Grok Bot dock; hide overflow tray)
 
   -Audit              Report only (default)
   -Apply              Apply harden + cleanup service/startup changes
@@ -16,6 +17,7 @@
   -SkipHarden         Skip harden step
   -SkipCleanup        Skip cleanup step
   -SkipUnpin          Skip dedicated Edge/Outlook/Store step
+  -SkipTaskbar        Skip minimal dock taskbar step
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Audit
@@ -31,7 +33,8 @@ param(
   [switch]$RestartIfNeeded,
   [switch]$SkipHarden,
   [switch]$SkipCleanup,
-  [switch]$SkipUnpin
+  [switch]$SkipUnpin,
+  [switch]$SkipTaskbar
 )
 
 Set-StrictMode -Version Latest
@@ -63,6 +66,7 @@ if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
   if ($SkipHarden) { $args += '-SkipHarden' }
   if ($SkipCleanup) { $args += '-SkipCleanup' }
   if ($SkipUnpin) { $args += '-SkipUnpin' }
+  if ($SkipTaskbar) { $args += '-SkipTaskbar' }
   if ($WhatIfPreference) { $args += '-WhatIf' }
   Start-Process powershell.exe -Verb RunAs -ArgumentList $args | Out-Null
   return
@@ -71,6 +75,7 @@ if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
 $harden = Join-Path $here 'Harden-ITAdminPC.ps1'
 $cleanup = Join-Path $here 'Cleanup-Background.ps1'
 $unpin = Join-Path $here 'Unpin-And-Remove-OEM.ps1'
+$taskbar = Join-Path $here 'Minimal-Taskbar.ps1'
 
 function Invoke-Step {
   param([string]$Path, [string[]]$ArgList, [string]$Label)
@@ -97,6 +102,12 @@ if (-not $SkipCleanup) {
 
 if (-not $SkipUnpin -and ($Apply -or $UninstallNotKept)) {
   Invoke-Step -Path $unpin -ArgList @() -Label 'Unpin-And-Remove-OEM'
+}
+
+if (-not $SkipTaskbar -and ($Apply -or $UninstallNotKept -or $Audit)) {
+  $tArgs = @()
+  if ($Apply -or $UninstallNotKept) { $tArgs += '-Apply' } else { $tArgs += '-Audit' }
+  Invoke-Step -Path $taskbar -ArgList $tArgs -Label 'Minimal-Taskbar'
 }
 
 L '==== Admin-Setup finished ===='
