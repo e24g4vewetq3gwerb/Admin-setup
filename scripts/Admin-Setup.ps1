@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-  One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar (Start + ↑).
+  One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar (Start + up-arrow).
 
 .DESCRIPTION
   Entry point for the admin package. Runs in order:
     1) Harden-ITAdminPC.ps1
     2) Cleanup-Background.ps1
     3) Unpin-And-Remove-OEM.ps1 (also invoked from Cleanup on -Apply)
-    4) Minimal-Taskbar.ps1 (default Start + ↑ only; optional -DockChromeCursorGrok)
+    4) Minimal-Taskbar.ps1 (default Start + up-arrow only; optional -DockChromeCursorGrok)
 
   -Audit              Report only (default)
   -Apply              Apply harden + cleanup service/startup changes
@@ -129,7 +129,7 @@ if (-not $SkipTaskbar -and ($Apply -or $UninstallNotKept -or $Audit)) {
   if ($DockChromeCursorGrok) {
     $tArgs += '-DockChromeCursorGrok'
   } else {
-    # Default: Start + ↑ only
+    # Default: Start + up-arrow only
     $tArgs += '-StartOnly'
   }
   Invoke-Step -Path $taskbar -ArgList $tArgs -Label 'Minimal-Taskbar'
@@ -139,7 +139,7 @@ L '==== Admin-Setup finished ===='
 Write-Host ''
 Write-Host 'Admin-Setup finished. See CSVs/logs under this scripts folder.'
 Write-Host "Log: $log"
-Write-Host 'Default taskbar goal: Start button + ↑ chevron only'
+Write-Host 'Default taskbar goal: Start button + up-arrow chevron only'
 
 # Restart policy: -Restart always; -RestartIfNeeded when Apply path ran taskbar/cleanup
 $alreadyScheduled = $false
