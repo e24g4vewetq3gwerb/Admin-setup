@@ -1,29 +1,33 @@
 <#
 .SYNOPSIS
-  One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar dock.
+  One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar (Start + ↑).
 
 .DESCRIPTION
   Entry point for the admin package. Runs in order:
     1) Harden-ITAdminPC.ps1
     2) Cleanup-Background.ps1
     3) Unpin-And-Remove-OEM.ps1 (also invoked from Cleanup on -Apply)
-    4) Minimal-Taskbar.ps1 (Chrome / Cursor / Grok Bot dock; Windhawk up-arrow tray)
+    4) Minimal-Taskbar.ps1 (default Start + ↑ only; optional -DockChromeCursorGrok)
 
   -Audit              Report only (default)
   -Apply              Apply harden + cleanup service/startup changes
   -UninstallNotKept   Uninstall apps outside Minimal keep list
   -Restart            Reboot when finished
-  -RestartIfNeeded    Reboot only if child scripts reported changes
+  -RestartIfNeeded    Reboot only if child scripts reported changes / taskbar+cleanup Apply ran
   -SkipHarden         Skip harden step
   -SkipCleanup        Skip cleanup step
   -SkipUnpin          Skip dedicated Edge/Outlook/Store step
-  -SkipTaskbar        Skip minimal dock taskbar step
+  -SkipTaskbar        Skip minimal taskbar step
   -SkipWindhawkTray   Skip Windhawk up-arrow-only tray inside Minimal-Taskbar
+  -DockChromeCursorGrok  Pass through: pin Chrome/Cursor/Grok (legacy dock) instead of StartOnly
+  -StartOnly          Pass through to Minimal-Taskbar (default on Apply/Uninstall)
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Audit
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Apply -UninstallNotKept -RestartIfNeeded
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Apply -DockChromeCursorGrok
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -36,7 +40,9 @@ param(
   [switch]$SkipCleanup,
   [switch]$SkipUnpin,
   [switch]$SkipTaskbar,
-  [switch]$SkipWindhawkTray
+  [switch]$SkipWindhawkTray,
+  [switch]$DockChromeCursorGrok,
+  [switch]$StartOnly
 )
 
 Set-StrictMode -Version Latest
@@ -56,7 +62,7 @@ function Test-IsAdmin {
   return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-L "==== Admin-Setup Audit=$Audit Apply=$Apply UninstallNotKept=$UninstallNotKept elevated=$(Test-IsAdmin) ===="
+L "==== Admin-Setup Audit=$Audit Apply=$Apply UninstallNotKept=$UninstallNotKept DockChromeCursorGrok=$DockChromeCursorGrok StartOnly=$StartOnly elevated=$(Test-IsAdmin) ===="
 
 if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
   L 'Re-launching elevated...'
@@ -70,6 +76,8 @@ if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
   if ($SkipUnpin) { $args += '-SkipUnpin' }
   if ($SkipTaskbar) { $args += '-SkipTaskbar' }
   if ($SkipWindhawkTray) { $args += '-SkipWindhawkTray' }
+  if ($DockChromeCursorGrok) { $args += '-DockChromeCursorGrok' }
+  if ($StartOnly) { $args += '-StartOnly' }
   if ($WhatIfPreference) { $args += '-WhatIf' }
   Start-Process powershell.exe -Verb RunAs -ArgumentList $args | Out-Null
   return
@@ -79,6 +87,8 @@ $harden = Join-Path $here 'Harden-ITAdminPC.ps1'
 $cleanup = Join-Path $here 'Cleanup-Background.ps1'
 $unpin = Join-Path $here 'Unpin-And-Remove-OEM.ps1'
 $taskbar = Join-Path $here 'Minimal-Taskbar.ps1'
+
+$script:TaskbarOrCleanupApplied = $false
 
 function Invoke-Step {
   param([string]$Path, [string[]]$ArgList, [string]$Label)
@@ -97,8 +107,8 @@ if (-not $SkipHarden) {
 
 if (-not $SkipCleanup) {
   $cArgs = @()
-  if ($Apply) { $cArgs += '-Apply' }
-  if ($UninstallNotKept) { $cArgs += '-UninstallNotKept' }
+  if ($Apply) { $cArgs += '-Apply'; $script:TaskbarOrCleanupApplied = $true }
+  if ($UninstallNotKept) { $cArgs += '-UninstallNotKept'; $script:TaskbarOrCleanupApplied = $true }
   if (-not $Apply -and -not $UninstallNotKept) { $cArgs += '-Audit' }
   Invoke-Step -Path $cleanup -ArgList $cArgs -Label 'Cleanup-Background'
 }
@@ -109,8 +119,19 @@ if (-not $SkipUnpin -and ($Apply -or $UninstallNotKept)) {
 
 if (-not $SkipTaskbar -and ($Apply -or $UninstallNotKept -or $Audit)) {
   $tArgs = @()
-  if ($Apply -or $UninstallNotKept) { $tArgs += '-Apply' } else { $tArgs += '-Audit' }
+  if ($Apply -or $UninstallNotKept) {
+    $tArgs += '-Apply'
+    $script:TaskbarOrCleanupApplied = $true
+  } else {
+    $tArgs += '-Audit'
+  }
   if ($SkipWindhawkTray) { $tArgs += '-SkipWindhawkTray' }
+  if ($DockChromeCursorGrok) {
+    $tArgs += '-DockChromeCursorGrok'
+  } else {
+    # Default: Start + ↑ only
+    $tArgs += '-StartOnly'
+  }
   Invoke-Step -Path $taskbar -ArgList $tArgs -Label 'Minimal-Taskbar'
 }
 
@@ -118,10 +139,23 @@ L '==== Admin-Setup finished ===='
 Write-Host ''
 Write-Host 'Admin-Setup finished. See CSVs/logs under this scripts folder.'
 Write-Host "Log: $log"
+Write-Host 'Default taskbar goal: Start button + ↑ chevron only'
 
+# Restart policy: -Restart always; -RestartIfNeeded when Apply path ran taskbar/cleanup
+$alreadyScheduled = $false
 if ($Restart) {
   L 'Restart requested - 60s'
   shutdown.exe /r /t 60 /c 'Admin-Setup: restart to finish applying changes'
+  $alreadyScheduled = $true
+} elseif ($RestartIfNeeded -and $script:TaskbarOrCleanupApplied -and ($Apply -or $UninstallNotKept)) {
+  L 'RestartIfNeeded: scheduling shutdown /r /t 60 after Apply taskbar/cleanup'
+  Write-Host 'Restarting in 60 seconds to finish applying changes. Run: shutdown /a   to cancel.'
+  shutdown.exe /r /t 60 /c 'Admin-Setup: restart to finish applying changes'
+  $alreadyScheduled = $true
 } elseif ($RestartIfNeeded) {
-  L 'RestartIfNeeded: rely on child scripts if they scheduled shutdown; otherwise reboot manually if taskbar/apps look stale'
+  L 'RestartIfNeeded set but no Apply taskbar/cleanup ran — skip reboot (child may have scheduled separately)'
+}
+
+if ($alreadyScheduled) {
+  L 'Reboot scheduled (shutdown /a to cancel)'
 }
