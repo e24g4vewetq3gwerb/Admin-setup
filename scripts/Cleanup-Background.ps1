@@ -62,18 +62,29 @@ function Get-InstalledPrograms {
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
   )
   Get-ItemProperty $paths -ErrorAction SilentlyContinue |
-    Where-Object { $_.DisplayName -and -not $_.SystemComponent } |
+    Where-Object {
+      $dn = $_.DisplayName
+      if ([string]::IsNullOrWhiteSpace($dn)) { return $false }
+      $scProp = $_.PSObject.Properties['SystemComponent']
+      if ($scProp -and $scProp.Value -eq 1) { return $false }
+      $true
+    } |
     ForEach-Object {
+      $get = {
+        param($o, $n)
+        $p = $o.PSObject.Properties[$n]
+        if ($p) { $p.Value } else { $null }
+      }
       [pscustomobject]@{
-        DisplayName          = $_.DisplayName
-        DisplayVersion       = $_.DisplayVersion
-        Publisher            = $_.Publisher
-        InstallDate          = $_.InstallDate
-        EstimatedSizeKB      = $_.EstimatedSize
-        UninstallString      = $_.UninstallString
-        QuietUninstallString = $_.QuietUninstallString
-        PSChildName          = $_.PSChildName
-        HivePath             = $_.PSPath
+        DisplayName          = (& $get $_ 'DisplayName')
+        DisplayVersion       = (& $get $_ 'DisplayVersion')
+        Publisher            = (& $get $_ 'Publisher')
+        InstallDate          = (& $get $_ 'InstallDate')
+        EstimatedSizeKB      = (& $get $_ 'EstimatedSize')
+        UninstallString      = (& $get $_ 'UninstallString')
+        QuietUninstallString = (& $get $_ 'QuietUninstallString')
+        PSChildName          = (& $get $_ 'PSChildName')
+        HivePath             = (& $get $_ 'PSPath')
       }
     } |
     Sort-Object DisplayName -Unique
