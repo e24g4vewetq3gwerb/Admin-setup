@@ -6,6 +6,8 @@ Public Windows **IT admin workstation** toolkit for a minimal, hardened personal
 
 Repo: [`e24g4vewetq3gwerb/Admin-setup`](https://github.com/e24g4vewetq3gwerb/Admin-setup) (public)
 
+![Admin setup activity flowchart](docs/admin-setup-flowchart.png)
+
 ---
 
 ## Quick start (elevated PowerShell)
@@ -18,6 +20,26 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Admin-Setup.ps1 -Apply -Unins
 ```
 
 `Admin-Setup.ps1` is the **one-shot entrypoint**. It runs hardening, background cleanup, and Edge/Outlook/Store taskbar removal in order.
+
+---
+
+## Activity flow (template)
+
+```
+Admin-Setup.ps1
+   ├─ -Audit   → report only (CSVs)
+   ├─ -Apply   → Harden → Cleanup → Unpin OEM
+   └─ -RestartIfNeeded → reboot if changes require it
+
+Optional: Complete-Need.ps1 (finish NEED items / Secure Boot how-to)
+```
+
+| Stage | Script | Activity |
+|-------|--------|----------|
+| 1 | **Harden-ITAdminPC.ps1** | Security baseline (UAC, Defender, firewall, SMB/LLMNR, RDP/WinRM, lock) |
+| 2 | **Cleanup-Background.ps1** | Minimal desktop; uninstall non-kept apps; service/startup cleanup |
+| 3 | **Unpin-And-Remove-OEM.ps1** | Unpin Edge / Outlook / Store; remove OEM AppX |
+| * | **Complete-Need.ps1** | Optional: NetBIOS, SMB/RPC blocks, BitLocker attempt, Secure Boot notes |
 
 ---
 
