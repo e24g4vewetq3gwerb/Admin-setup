@@ -1,10 +1,10 @@
 # Admin PC setup
 
-Private Windows **IT admin workstation** toolkit for a minimal, hardened personal PC.
+Public Windows **IT admin workstation** toolkit for a minimal, hardened personal PC.
 
 **Keep profile:** Google Chrome, Grok Bot, Windows Terminal (plus protected drivers: Realtek audio, VC++ redistributables, Canon printer stack).
 
-Repo: [`e24g4vewetq3gwerb/admin`](https://github.com/e24g4vewetq3gwerb/admin) (private)
+Repo: [`e24g4vewetq3gwerb/Admin-setup`](https://github.com/e24g4vewetq3gwerb/Admin-setup) (public)
 
 ---
 
@@ -60,6 +60,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Admin-Setup.ps1 -Apply -Unins
 
 ---
 
-## Portfolio / LinkedIn
+## Portfolio note
 
 Documents a practical **endpoint hardening + minimal desktop** workflow for an IT-admin style workstation.
