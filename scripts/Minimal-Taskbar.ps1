@@ -1,26 +1,37 @@
 <#
 .SYNOPSIS
-  Minimal dock-style taskbar: only Chrome, Cursor, and Grok Bot; hide widgets/search/task view and overflow tray icons.
+  Minimal dock-style taskbar: Chrome, Cursor, Grok Bot; optional Windhawk up-arrow-only tray.
 
 .DESCRIPTION
   - Hides Widgets/weather, Search, Task View, Chat/Copilot
   - Centers taskbar icons
-  - Hides everything under the system-tray overflow chevron (NoTrayItemsDisplay + IsPromoted=0)
+  - Demotes overflow NotifyIconSettings (IsPromoted=0); keeps the chevron
+  - Does NOT set NoTrayItemsDisplay (that would hide the chevron)
   - Keeps pin shortcuts for Chrome, Cursor, Grok Bot only
-  Does not auto-hide the whole taskbar (apps stay visible).
+  - On -Apply -IncludeWindhawkTray (default on Apply): runs Restore-TrayArrowOnly.ps1
+    so language / Wi-Fi / volume / battery / Show Desktop are hidden via Windhawk
 
-  -Audit   Report only (default)
-  -Apply   Write registry + clean pins + restart Explorer
+  Classic HideSCA* policies do not hide Control Center icons on Windows 11 25H2;
+  Windhawk mod taskbar-tray-system-icon-tweaks is required for that.
+
+  -Audit                 Report only (default)
+  -Apply                 Write registry + clean pins + restart Explorer
+  -IncludeWindhawkTray   Also configure Windhawk up-arrow-only tray (default when -Apply)
+  -SkipWindhawkTray      Skip Windhawk even on -Apply
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
   [switch]$Audit,
-  [switch]$Apply
+  [switch]$Apply,
+  [switch]$IncludeWindhawkTray,
+  [switch]$SkipWindhawkTray
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 if (-not $Audit -and -not $Apply) { $Audit = $true }
+if ($Apply -and -not $SkipWindhawkTray) { $IncludeWindhawkTray = $true }
+if ($SkipWindhawkTray) { $IncludeWindhawkTray = $false }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $log = Join-Path $here 'Minimal-Taskbar.log'
@@ -33,7 +44,7 @@ function L([string]$m) {
 }
 function Add-R([string]$Item, [string]$Status, [string]$Detail) {
   $results.Add([pscustomobject]@{ Item = $Item; Status = $Status; Detail = $Detail })
-  L "[$Status] $Item — $Detail"
+  L "[$Status] $Item - $Detail"
 }
 
 function Get-RegInt([string]$Path, [string]$Name) {
@@ -59,7 +70,7 @@ function Set-RegDword([string]$Path, [string]$Name, [int]$Value, [string]$Label)
   }
 }
 
-L "==== Minimal-Taskbar Audit=$Audit Apply=$Apply ===="
+L "==== Minimal-Taskbar Audit=$Audit Apply=$Apply IncludeWindhawkTray=$IncludeWindhawkTray ===="
 
 $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
 $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
@@ -74,9 +85,21 @@ Set-RegDword $adv 'ShowCopilotButton' 0 'Copilot button'
 Set-RegDword $adv 'TaskbarAl' 1 'Taskbar center align'
 Set-RegDword $search 'SearchboxTaskbarMode' 0 'Search box hidden'
 Set-RegDword $feeds 'ShellFeedsTaskbarViewMode' 2 'News and interests hidden'
-Set-RegDword $pol 'NoTrayItemsDisplay' 1 'Hide overflow tray icons (chevron)'
 
-# Other system tray icons -> Off
+# Keep the chevron: clear NoTrayItemsDisplay if present
+$noTray = Get-RegInt $pol 'NoTrayItemsDisplay'
+if ($Audit) {
+  $want = if ($null -eq $noTray -or $noTray -eq 0) { 'OK' } else { 'NEED' }
+  Add-R 'NoTrayItemsDisplay (must be off to keep chevron)' $want "current=$noTray want=absent/0"
+} elseif ($null -ne $noTray -and $noTray -ne 0) {
+  Remove-ItemProperty -Path $pol -Name 'NoTrayItemsDisplay' -Force -ErrorAction SilentlyContinue
+  Add-R 'NoTrayItemsDisplay' 'FIXED' 'removed so chevron stays'
+}
+
+# Clock hide (best-effort on Win11)
+Set-RegDword $adv 'ShowSystrayDateTimeValueName' 0 'Clock / date in tray'
+
+# Other app tray icons -> overflow (not promoted)
 if (Test-Path $nis) {
   $keys = @(Get-ChildItem $nis)
   $bad = 0
@@ -96,7 +119,6 @@ if (Test-Path $nis) {
   Add-R 'NotifyIconSettings' 'OK' 'key missing (nothing to hide)'
 }
 
-# Widgets policy (machine)
 if (-not $Audit) {
   try {
     New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' -Force | Out-Null
@@ -107,7 +129,6 @@ if (-not $Audit) {
   }
 }
 
-# Pin folder: only Chrome / Cursor / Grok Bot shortcuts
 $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
 $keepNames = @('Google Chrome.lnk', 'Cursor.lnk', 'Grok Bot.lnk')
 $sources = @{
@@ -125,6 +146,8 @@ if ($Audit) {
   }
   $missing = @($keepNames | Where-Object { -not (Test-Path (Join-Path $pinDir $_)) })
   Add-R 'TaskBar pin folder' $(if ($extra.Count -eq 0 -and $missing.Count -eq 0) { 'OK' } else { 'NEED' }) "extra=$($extra -join ';') missing=$($missing -join ';')"
+  $wh = Test-Path 'C:\Program Files\Windhawk\Windhawk.exe'
+  Add-R 'Windhawk installed' $(if ($wh) { 'OK' } else { 'NEED' }) $(if ($wh) { 'present' } else { 'install for up-arrow-only tray' })
 } else {
   New-Item -ItemType Directory -Force -Path $pinDir | Out-Null
   Get-ChildItem $pinDir -Filter '*.lnk' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -142,7 +165,6 @@ if ($Audit) {
       Add-R "Pin shortcut $name" 'NEED' "source missing: $src"
     }
   }
-  # Clear Taskband favorites so Explorer rebuilds from pin folder where possible
   try {
     $tb = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband'
     if (Test-Path $tb) {
@@ -158,6 +180,19 @@ if ($Audit) {
     Remove-ItemProperty -Path $tray -Name 'IconStreams' -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $tray -Name 'PastIconsStream' -Force -ErrorAction SilentlyContinue
     Add-R 'TrayNotify cache' 'FIXED' 'cleared'
+  }
+}
+
+if ($IncludeWindhawkTray -and -not $Audit) {
+  $restore = Join-Path $here 'Restore-TrayArrowOnly.ps1'
+  if (Test-Path $restore) {
+    L 'START Restore-TrayArrowOnly'
+    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $restore
+    ) -Wait -PassThru -NoNewWindow
+    Add-R 'Windhawk up-arrow tray' $(if ($p.ExitCode -eq 0) { 'FIXED' } else { 'NEED' }) "exit=$($p.ExitCode)"
+  } else {
+    Add-R 'Windhawk up-arrow tray' 'NEED' "missing $restore"
   }
 }
 

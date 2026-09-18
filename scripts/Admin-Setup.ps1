@@ -7,7 +7,7 @@
     1) Harden-ITAdminPC.ps1
     2) Cleanup-Background.ps1
     3) Unpin-And-Remove-OEM.ps1 (also invoked from Cleanup on -Apply)
-    4) Minimal-Taskbar.ps1 (Chrome / Cursor / Grok Bot dock; hide overflow tray)
+    4) Minimal-Taskbar.ps1 (Chrome / Cursor / Grok Bot dock; Windhawk up-arrow tray)
 
   -Audit              Report only (default)
   -Apply              Apply harden + cleanup service/startup changes
@@ -18,6 +18,7 @@
   -SkipCleanup        Skip cleanup step
   -SkipUnpin          Skip dedicated Edge/Outlook/Store step
   -SkipTaskbar        Skip minimal dock taskbar step
+  -SkipWindhawkTray   Skip Windhawk up-arrow-only tray inside Minimal-Taskbar
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Audit
@@ -34,7 +35,8 @@ param(
   [switch]$SkipHarden,
   [switch]$SkipCleanup,
   [switch]$SkipUnpin,
-  [switch]$SkipTaskbar
+  [switch]$SkipTaskbar,
+  [switch]$SkipWindhawkTray
 )
 
 Set-StrictMode -Version Latest
@@ -67,6 +69,7 @@ if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
   if ($SkipCleanup) { $args += '-SkipCleanup' }
   if ($SkipUnpin) { $args += '-SkipUnpin' }
   if ($SkipTaskbar) { $args += '-SkipTaskbar' }
+  if ($SkipWindhawkTray) { $args += '-SkipWindhawkTray' }
   if ($WhatIfPreference) { $args += '-WhatIf' }
   Start-Process powershell.exe -Verb RunAs -ArgumentList $args | Out-Null
   return
@@ -107,6 +110,7 @@ if (-not $SkipUnpin -and ($Apply -or $UninstallNotKept)) {
 if (-not $SkipTaskbar -and ($Apply -or $UninstallNotKept -or $Audit)) {
   $tArgs = @()
   if ($Apply -or $UninstallNotKept) { $tArgs += '-Apply' } else { $tArgs += '-Audit' }
+  if ($SkipWindhawkTray) { $tArgs += '-SkipWindhawkTray' }
   Invoke-Step -Path $taskbar -ArgList $tArgs -Label 'Minimal-Taskbar'
 }
 
