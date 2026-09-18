@@ -1,14 +1,17 @@
 <#
 .SYNOPSIS
-  Minimal dock-style taskbar: Chrome, Cursor, Grok Bot; optional Windhawk up-arrow-only tray.
+  Minimal taskbar: Start button + ↑ chevron only (default); optional Chrome/Cursor/Grok dock.
 
 .DESCRIPTION
+  Goal: Start button + ↑ Show Hidden Icons chevron only (no pinned apps by default).
+
   - Hides Widgets/weather, Search, Task View, Chat/Copilot
-  - Centers taskbar icons
+  - Left-aligns taskbar when StartOnly (TaskbarAl=0) so Start is the only left icon
   - Demotes overflow NotifyIconSettings (IsPromoted=0); keeps the chevron
   - Does NOT set NoTrayItemsDisplay (that would hide the chevron)
-  - Keeps pin shortcuts for Chrome, Cursor, Grok Bot only
-  - On -Apply -IncludeWindhawkTray (default on Apply): runs Restore-TrayArrowOnly.ps1
+  - -StartOnly (default on -Apply unless -DockChromeCursorGrok): remove ALL TaskBar .lnk pins
+  - -DockChromeCursorGrok: pin Chrome, Cursor, Grok Bot and center-align (legacy dock)
+  - On -Apply: runs Restore-TrayArrowOnly.ps1 unless -SkipWindhawkTray
     so language / Wi-Fi / volume / battery / Show Desktop are hidden via Windhawk
 
   Classic HideSCA* policies do not hide Control Center icons on Windows 11 25H2;
@@ -16,6 +19,8 @@
 
   -Audit                 Report only (default)
   -Apply                 Write registry + clean pins + restart Explorer
+  -StartOnly             Clear all pins; left align (default when -Apply unless DockChromeCursorGrok)
+  -DockChromeCursorGrok  Legacy: pin Chrome/Cursor/Grok; center align
   -IncludeWindhawkTray   Also configure Windhawk up-arrow-only tray (default when -Apply)
   -SkipWindhawkTray      Skip Windhawk even on -Apply
 #>
@@ -23,6 +28,8 @@
 param(
   [switch]$Audit,
   [switch]$Apply,
+  [switch]$StartOnly,
+  [switch]$DockChromeCursorGrok,
   [switch]$IncludeWindhawkTray,
   [switch]$SkipWindhawkTray
 )
@@ -30,6 +37,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 if (-not $Audit -and -not $Apply) { $Audit = $true }
+
+# StartOnly is the default Apply profile unless DockChromeCursorGrok is set
+if ($Apply -and -not $DockChromeCursorGrok -and -not $PSBoundParameters.ContainsKey('StartOnly')) {
+  $StartOnly = $true
+}
+if ($DockChromeCursorGrok) { $StartOnly = $false }
 if ($Apply -and -not $SkipWindhawkTray) { $IncludeWindhawkTray = $true }
 if ($SkipWindhawkTray) { $IncludeWindhawkTray = $false }
 
@@ -70,7 +83,9 @@ function Set-RegDword([string]$Path, [string]$Name, [int]$Value, [string]$Label)
   }
 }
 
-L "==== Minimal-Taskbar Audit=$Audit Apply=$Apply IncludeWindhawkTray=$IncludeWindhawkTray ===="
+L "==== Minimal-Taskbar Audit=$Audit Apply=$Apply StartOnly=$StartOnly DockChromeCursorGrok=$DockChromeCursorGrok IncludeWindhawkTray=$IncludeWindhawkTray ===="
+L 'Goal: Start button + ↑ chevron only'
+Write-Host 'Goal: Start button + ↑ chevron only'
 
 $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
 $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
@@ -82,7 +97,11 @@ Set-RegDword $adv 'TaskbarDa' 0 'Widgets/weather button'
 Set-RegDword $adv 'ShowTaskViewButton' 0 'Task View button'
 Set-RegDword $adv 'TaskbarMn' 0 'Chat button'
 Set-RegDword $adv 'ShowCopilotButton' 0 'Copilot button'
-Set-RegDword $adv 'TaskbarAl' 1 'Taskbar center align'
+# StartOnly: left align (0) so Start/Windows logo is the only left icon; dock mode: center (1)
+$alignWant = if ($StartOnly -or (-not $DockChromeCursorGrok -and $Audit)) { 0 } else { 1 }
+if ($DockChromeCursorGrok) { $alignWant = 1 }
+$alignLabel = if ($alignWant -eq 0) { 'Taskbar left align (Start only)' } else { 'Taskbar center align' }
+Set-RegDword $adv 'TaskbarAl' $alignWant $alignLabel
 Set-RegDword $search 'SearchboxTaskbarMode' 0 'Search box hidden'
 Set-RegDword $feeds 'ShellFeedsTaskbarViewMode' 2 'News and interests hidden'
 
@@ -130,7 +149,7 @@ if (-not $Audit) {
 }
 
 $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
-$keepNames = @('Google Chrome.lnk', 'Cursor.lnk', 'Grok Bot.lnk')
+$dockNames = @('Google Chrome.lnk', 'Cursor.lnk', 'Grok Bot.lnk')
 $sources = @{
   'Google Chrome.lnk' = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Google Chrome.lnk"
   'Cursor.lnk'        = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cursor.lnk"
@@ -138,31 +157,54 @@ $sources = @{
 }
 
 if ($Audit) {
-  $extra = @()
+  $allPins = @()
   if (Test-Path $pinDir) {
-    $extra = @(Get-ChildItem $pinDir -Filter '*.lnk' -ErrorAction SilentlyContinue |
-      Where-Object { $keepNames -notcontains $_.Name } |
+    $allPins = @(Get-ChildItem $pinDir -Filter '*.lnk' -ErrorAction SilentlyContinue |
       Select-Object -ExpandProperty Name)
   }
-  $missing = @($keepNames | Where-Object { -not (Test-Path (Join-Path $pinDir $_)) })
-  Add-R 'TaskBar pin folder' $(if ($extra.Count -eq 0 -and $missing.Count -eq 0) { 'OK' } else { 'NEED' }) "extra=$($extra -join ';') missing=$($missing -join ';')"
+  $extra = @($allPins)
+  $missingDocks = @()
+  if ($DockChromeCursorGrok) {
+    $extra = @($allPins | Where-Object { $dockNames -notcontains $_ })
+    $missingDocks = @($dockNames | Where-Object { -not (Test-Path (Join-Path $pinDir $_)) })
+  }
+  $startOnlyMet = ($allPins.Count -eq 0)
+  Add-R 'TaskBar pin folder' $(if ($DockChromeCursorGrok) {
+      if ($extra.Count -eq 0 -and $missingDocks.Count -eq 0) { 'OK' } else { 'NEED' }
+    } else {
+      if ($startOnlyMet) { 'OK' } else { 'NEED' }
+    }) $(if ($DockChromeCursorGrok) {
+      "extra=$($extra -join ';') missing=$($missingDocks -join ';')"
+    } else {
+      "StartOnly goal (0 pins): pins=$($allPins.Count) list=$($allPins -join ';')"
+    })
+  Add-R 'StartOnly goal met' $(if ($startOnlyMet) { 'OK' } else { 'NEED' }) "pinCount=$($allPins.Count) (want 0 for Start+↑ only)"
   $wh = Test-Path 'C:\Program Files\Windhawk\Windhawk.exe'
   Add-R 'Windhawk installed' $(if ($wh) { 'OK' } else { 'NEED' }) $(if ($wh) { 'present' } else { 'install for up-arrow-only tray' })
 } else {
   New-Item -ItemType Directory -Force -Path $pinDir | Out-Null
-  Get-ChildItem $pinDir -Filter '*.lnk' -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($keepNames -notcontains $_.Name) {
+  if ($StartOnly) {
+    Get-ChildItem $pinDir -Filter '*.lnk' -ErrorAction SilentlyContinue | ForEach-Object {
       Remove-Item $_.FullName -Force
-      Add-R "Remove pin $($_.Name)" 'FIXED' 'removed'
+      Add-R "Remove pin $($_.Name)" 'FIXED' 'removed (StartOnly)'
     }
-  }
-  foreach ($name in $keepNames) {
-    $src = $sources[$name]
-    if (Test-Path $src) {
-      Copy-Item $src (Join-Path $pinDir $name) -Force
-      Add-R "Pin shortcut $name" 'FIXED' 'copied'
-    } else {
-      Add-R "Pin shortcut $name" 'NEED' "source missing: $src"
+    Add-R 'TaskBar pins' 'FIXED' 'all .lnk removed; no Chrome/Cursor/Grok docks'
+  } else {
+    # DockChromeCursorGrok path
+    Get-ChildItem $pinDir -Filter '*.lnk' -ErrorAction SilentlyContinue | ForEach-Object {
+      if ($dockNames -notcontains $_.Name) {
+        Remove-Item $_.FullName -Force
+        Add-R "Remove pin $($_.Name)" 'FIXED' 'removed'
+      }
+    }
+    foreach ($name in $dockNames) {
+      $src = $sources[$name]
+      if (Test-Path $src) {
+        Copy-Item $src (Join-Path $pinDir $name) -Force
+        Add-R "Pin shortcut $name" 'FIXED' 'copied'
+      } else {
+        Add-R "Pin shortcut $name" 'NEED' "source missing: $src"
+      }
     }
   }
   try {
@@ -211,5 +253,6 @@ $results | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
 L "CSV $csv"
 L '==== Minimal-Taskbar finished ===='
 Write-Host "Minimal-Taskbar done. Log: $log"
+Write-Host 'Goal: Start button + ↑ chevron only'
 $need = @($results | Where-Object { $_.Status -eq 'NEED' }).Count
 if ($need -gt 0 -and $Apply) { exit 2 } else { exit 0 }
