@@ -23,6 +23,7 @@ $script:Bar = $null
 $script:Lbl = $null
 $script:Eta = $null
 $script:Win = $null
+$script:Skip = @('system volume information','$recycle.bin','pagefile.sys','hiberfil.sys','swapfile.sys','bootmgr','bootnxt','recovery','$winreagent')
 function Test-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   return (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -38,6 +39,11 @@ function L([string]$m) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $m
   Add-Content (Join-Path $script:AdminDir 'Admin-Setup.log') $line
   Write-Host $line
+}
+function Test-Skip([string]$Path) {
+  $n = [IO.Path]::GetFileName($Path)
+  if (-not $n) { return $false }
+  return ($script:Skip -contains $n.ToLowerInvariant())
 }
 function Show-Bar {
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -75,18 +81,20 @@ function Tick([string]$Path) {
   L $msg
 }
 function Kill-Item([string]$Path) {
-  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { Tick $Path; return }
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { Tick "missing $Path"; return }
+  if (Test-Skip $Path) { L "SKIP $Path"; Tick "SKIP $Path"; return }
   L "DELETE $Path"
   if ($script:Live) {
+    $to = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c',"takeown /F `"$Path`" /R /D Y") -WindowStyle Hidden -PassThru
+    if (-not $to.WaitForExit(8000)) { try { $to.Kill() } catch {} }
     cmd /c "attrib -s -h -r `"$Path`" /s /d >nul 2>&1"
-    cmd /c "takeown /F `"$Path`" /R /D Y >nul 2>&1"
     cmd /c "icacls `"$Path`" /grant *S-1-5-32-544:F /T /C /Q >nul 2>&1"
-    cmd /c "del /f /s /q `"$Path`" >nul 2>&1"
     try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue } catch {}
     if (Test-Path -LiteralPath $Path -PathType Container) {
       $e = Join-Path $env:TEMP ('z' + [guid]::NewGuid().ToString('N'))
       New-Item -ItemType Directory -Force -Path $e | Out-Null
-      cmd /c "robocopy `"$e`" `"$Path`" /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS /MT:8 >nul"
+      $rc = Start-Process -FilePath 'robocopy.exe' -ArgumentList @($e,$Path,'/MIR','/R:0','/W:0','/NFL','/NDL','/NJH','/NJS') -WindowStyle Hidden -PassThru
+      if (-not $rc.WaitForExit(15000)) { try { $rc.Kill() } catch {} }
       cmd /c "rd /s /q `"$Path`""
       Remove-Item $e -Force -ErrorAction SilentlyContinue
     }
@@ -100,12 +108,14 @@ function Invoke-Wipe {
   Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -in 2, 3, 6 } | ForEach-Object {
     $let = $_.DeviceID.TrimEnd(':')
     if ($let -eq $os) { return }
-    Get-ChildItem -LiteralPath ($let + ':\') -Force -ErrorAction SilentlyContinue | ForEach-Object { [void]$jobs.Add($_.FullName) }
+    Get-ChildItem -LiteralPath ($let + ':\') -Force -ErrorAction SilentlyContinue | ForEach-Object {
+      if (-not (Test-Skip $_.FullName)) { [void]$jobs.Add($_.FullName) }
+    }
   }
-  $keep = @('windows','boot','bootmgr','bootnxt','bootsect.bak','recovery','$winreagent','system volume information','pagefile.sys','hiberfil.sys','swapfile.sys','users')
+  $keepC = @('windows','boot','bootmgr','bootnxt','bootsect.bak','recovery','$winreagent','system volume information','pagefile.sys','hiberfil.sys','swapfile.sys','users')
   Get-ChildItem -LiteralPath ($os + ':\') -Force -ErrorAction SilentlyContinue | ForEach-Object {
     $n = $_.Name.ToLowerInvariant()
-    if ($keep -contains $n) { return }
+    if ($keepC -contains $n) { return }
     [void]$jobs.Add($_.FullName)
   }
   $usersRoot = Join-Path ($os + ':\') 'Users'
@@ -129,12 +139,6 @@ function Invoke-Wipe {
   L 'Recycle Bin last'
   if ($script:Live) {
     try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
-    Get-CimInstance Win32_LogicalDisk | ForEach-Object {
-      $rb = $_.DeviceID.TrimEnd(':') + ':\$Recycle.Bin'
-      if (Test-Path -LiteralPath $rb) {
-        Get-ChildItem -LiteralPath $rb -Force -ErrorAction SilentlyContinue | ForEach-Object { Kill-Item $_.FullName }
-      }
-    }
   }
   if ($script:Bar) { $script:Bar.Value = 100 }
   if ($script:Lbl) { $script:Lbl.Text = 'Done' }
