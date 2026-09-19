@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Admin Setup. Puts Admin Setup on THIS user desktop first, then elevates for installs.
+  Admin Setup. Icon on Explorer desktop + Start menu, then optional installs.
 #>
 [CmdletBinding()]
 param(
@@ -54,62 +54,56 @@ if ($self -and (Test-Path -LiteralPath $self)) {
 if (-not (Test-Path -LiteralPath $persist) -and $self -and (Test-Path $self)) {
   Copy-Item -LiteralPath $self -Destination $persist -Force
 }
-function Get-DesktopFolders {
-  $list = New-Object System.Collections.Generic.List[string]
-  foreach ($p in @(
-    [Environment]::GetFolderPath('Desktop'),
-    [Environment]::GetFolderPath('CommonDesktopDirectory'),
-    (Join-Path $env:USERPROFILE 'Desktop'),
-    (Join-Path $env:USERPROFILE 'OneDrive\Desktop'),
-    (Join-Path $env:USERPROFILE 'OneDrive - Personal\Desktop'),
-    (Join-Path $env:PUBLIC 'Desktop'),
-    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs')
-  )) {
-    if ($p -and (Test-Path -LiteralPath $p) -and -not $list.Contains($p)) { $list.Add($p) }
-  }
-  return $list
+function Get-ExplorerDesktop {
+  try { return (New-Object -ComObject Shell.Application).NameSpace(0x10).Self.Path } catch { return $null }
 }
-function Write-LaunchCmd([string]$CmdPath) {
-  @( 
-    '@echo off',
-    'set "PS1=%USERPROFILE%\admin\Admin-Setup.ps1"',
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -Apply -UninstallNotKept -RestartIfNeeded'
-  ) | Set-Content -LiteralPath $CmdPath -Encoding ASCII -Force
+function New-AdminLnk([string]$Folder) {
+  if (-not $Folder) { return $null }
+  if (-not (Test-Path -LiteralPath $Folder)) { New-Item -ItemType Directory -Force -Path $Folder | Out-Null }
+  $w = New-Object -ComObject WScript.Shell
+  $lnkPath = Join-Path $Folder 'Admin Setup.lnk'
+  $sc = $w.CreateShortcut($lnkPath)
+  $sc.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+  $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$persist`" -Apply -UninstallNotKept -RestartIfNeeded"
+  $sc.WorkingDirectory = $homeRoot
+  $sc.WindowStyle = 1
+  $sc.Description = 'Admin Setup'
+  $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
+  $sc.Save()
+  return $lnkPath
 }
 function Install-DesktopIcon {
-  $cmdPath = Join-Path $homeRoot 'Admin Setup.cmd'
-  Write-LaunchCmd $cmdPath
-  $w = New-Object -ComObject WScript.Shell
   $made = @()
-  foreach ($folder in (Get-DesktopFolders)) {
+  $desk = Get-ExplorerDesktop
+  if (-not $desk) { $desk = [Environment]::GetFolderPath('Desktop') }
+  $start = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+  foreach ($folder in @($desk, $start)) {
     try {
-      Copy-Item -LiteralPath $cmdPath -Destination (Join-Path $folder 'Admin Setup.cmd') -Force
-      $lnkPath = Join-Path $folder 'Admin Setup.lnk'
-      $sc = $w.CreateShortcut($lnkPath)
-      $sc.TargetPath = 'powershell.exe'
-      $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$persist`" -Apply -UninstallNotKept -RestartIfNeeded"
-      $sc.WorkingDirectory = $homeRoot
-      $sc.WindowStyle = 1
-      $sc.Description = 'Admin Setup'
-      $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
-      $sc.Save()
-      $made += $lnkPath
+      $p = New-AdminLnk $folder
+      if ($p) { $made += $p }
     } catch { Write-Log "Icon failed in $folder : $($_.Exception.Message)" }
   }
+  try {
+    $sa = New-Object -ComObject Shell.Application
+    $folder = $sa.NameSpace($start)
+    $item = $folder.ParseName('Admin Setup.lnk')
+    if ($item) {
+      foreach ($verb in @('Pin to Start','Pin to Tas&kbar','Pin to taskbar')) {
+        $v = $item.Verbs() | Where-Object { $_.Name -replace '&','' -eq ($verb -replace '&','') }
+        if ($v) { $v.DoIt() }
+      }
+    }
+  } catch { Write-Log "Pin verb failed: $($_.Exception.Message)" }
   return $made
 }
-
-# Icon FIRST, in this user session — do not wait for UAC.
 if (-not $SkipDesktopIcon) {
   $icons = Install-DesktopIcon
   Write-Host 'Admin Setup icons:'
-  if ($icons -and $icons.Count) { $icons | ForEach-Object { Write-Host "  $_" } }
-  else { Write-Host '  (none created — check desktop view / OneDrive)' }
+  $icons | ForEach-Object { Write-Host "  $_" }
+  Write-Host "Explorer desktop: $(Get-ExplorerDesktop)"
 }
 if ($IconOnly) { exit 0 }
-
 if (-not (Test-IsAdmin)) {
-  Write-Log 'Re-launching elevated...'
   $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$persist`"", '-SkipDesktopIcon')
   if ($Apply) { $arg += '-Apply' }
   if ($UninstallNotKept) { $arg += '-UninstallNotKept' }
@@ -133,15 +127,11 @@ function Get-UninstallHits([string[]]$Patterns) {
     Where-Object { $dn = [string](Get-Prop $_ 'DisplayName'); $dn -and (Test-NameLike $dn $Patterns) }
 }
 function Test-GrokBotInstalled {
-  foreach ($e in @("$env:LOCALAPPDATA\Programs\Grok Bot\Grok Bot.exe","${env:ProgramFiles}\Grok Bot\Grok Bot.exe","${env:ProgramFiles(x86)}\Grok Bot\Grok Bot.exe")) {
-    if ($e -and (Test-Path -LiteralPath $e)) { return $true }
-  }
+  foreach ($e in @("$env:LOCALAPPDATA\Programs\Grok Bot\Grok Bot.exe","${env:ProgramFiles}\Grok Bot\Grok Bot.exe","${env:ProgramFiles(x86)}\Grok Bot\Grok Bot.exe")) { if ($e -and (Test-Path -LiteralPath $e)) { return $true } }
   return [bool](Get-UninstallHits @('Grok Bot*'))
 }
 function Test-ChromeInstalled {
-  foreach ($e in @("${env:ProgramFiles}\Google\Chrome\Application\chrome.exe","${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe","$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")) {
-    if ($e -and (Test-Path -LiteralPath $e)) { return $true }
-  }
+  foreach ($e in @("${env:ProgramFiles}\Google\Chrome\Application\chrome.exe","${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe","$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")) { if ($e -and (Test-Path -LiteralPath $e)) { return $true } }
   return [bool](Get-UninstallHits @('Google Chrome*'))
 }
 function Save-Url {
@@ -151,10 +141,7 @@ function Save-Url {
   $ok = $false
   try { Start-BitsTransfer -Source $Url -Destination $Dest -ErrorAction Stop; $ok = $true } catch {}
   if (-not $ok) { try { Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -TimeoutSec 600; $ok = $true } catch {} }
-  if (-not $ok) {
-    $curl = "$env:SystemRoot\System32\curl.exe"
-    if (Test-Path $curl) { & $curl -L --retry 3 -o $Dest $Url; if ($LASTEXITCODE -eq 0) { $ok = $true } }
-  }
+  if (-not $ok) { $curl = "$env:SystemRoot\System32\curl.exe"; if (Test-Path $curl) { & $curl -L --retry 3 -o $Dest $Url; if ($LASTEXITCODE -eq 0) { $ok = $true } } }
   if (-not (Test-Path -LiteralPath $Dest)) { throw "Download produced no file: $Url" }
   if ((Get-Item -LiteralPath $Dest).Length -lt 500KB) { throw "Download too small: $Url" }
   return $Dest
@@ -166,34 +153,23 @@ function Get-GrokBotSetupInfo {
     try {
       $html = (Invoke-WebRequest -Uri $page -UseBasicParsing -TimeoutSec 60).Content
       $re = "https://downloads\.cursor\.com/grokbot/stable/$arch/[^`"'\s<>]+\.exe"
-      if ($html -match $re) {
-        $info.Url = $Matches[0]
-        if ($info.Url -match '/(\d+\.\d+\.\d+)/') { $info.Version = $Matches[1] }
-        break
-      }
+      if ($html -match $re) { $info.Url = $Matches[0]; if ($info.Url -match '/(\d+\.\d+\.\d+)/') { $info.Version = $Matches[1] }; break }
     } catch {}
   }
-  if (-not $info.Url) {
-    $info.Url = "https://downloads.cursor.com/grokbot/stable/$arch/0.47.0/Grok_Bot_0.47.0_Setup.exe"
-    $info.Version = '0.47.0-fallback'
-  }
+  if (-not $info.Url) { $info.Url = "https://downloads.cursor.com/grokbot/stable/$arch/0.47.0/Grok_Bot_0.47.0_Setup.exe"; $info.Version = '0.47.0-fallback' }
   return $info
 }
-function Get-ChromeSetupInfo {
-  [pscustomobject]@{ Url = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'; Fallback = 'https://dl.google.com/chrome/install/latest/chrome_installer.exe'; Version = 'latest-stable' }
-}
+function Get-ChromeSetupInfo { [pscustomobject]@{ Url = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'; Fallback = 'https://dl.google.com/chrome/install/latest/chrome_installer.exe'; Version = 'latest-stable' } }
 function Install-GrokBot([string]$Url) {
   $dest = Join-Path $env:TEMP 'AdminSetup-Grok_Bot_Setup.exe'
-  Write-Host 'Downloading Grok Bot...'
-  Save-Url -Url $Url -Dest $dest | Out-Null
+  Write-Host 'Downloading Grok Bot...'; Save-Url -Url $Url -Dest $dest | Out-Null
   Write-Host 'Installing Grok Bot...'
   $p = Start-Process -FilePath $dest -ArgumentList '/S' -PassThru -Wait
   if ($null -eq $p.ExitCode -or $p.ExitCode -notin @(0, 1)) { $p = Start-Process -FilePath $dest -PassThru -Wait }
   return $p.ExitCode
 }
 function Install-Chrome($Info) {
-  $dir = Join-Path $env:TEMP 'AdminSetup-Chrome'
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $dir = Join-Path $env:TEMP 'AdminSetup-Chrome'; New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $msi = Join-Path $dir 'ChromeEnterprise64.msi'
   Write-Host 'Downloading Google Chrome...'
   try {
@@ -243,9 +219,6 @@ function Invoke-LightWipe {
       if ($u -match '\{([0-9A-Fa-f-]{36})\}') {
         $p = Start-Process msiexec.exe -ArgumentList "/X{$($Matches[1])}", '/qn', '/norestart' -Wait -PassThru
         if ($p.ExitCode -in 0, 3010) { $changed = $true }
-      } elseif (Get-Prop $prog 'QuietUninstallString') {
-        Start-Process cmd.exe -ArgumentList '/c', (Get-Prop $prog 'QuietUninstallString') -Wait -WindowStyle Hidden | Out-Null
-        $changed = $true
       }
     } catch {}
   }
