@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Admin Setup. One desktop icon only, then optional Grok/Chrome install.
+  Admin Setup. One desktop icon on the home screen, then optional installs.
 #>
 [CmdletBinding()]
 param(
@@ -58,6 +58,25 @@ function Get-ExplorerDesktop {
   try { return (New-Object -ComObject Shell.Application).NameSpace(0x10).Self.Path } catch {}
   return [Environment]::GetFolderPath('Desktop')
 }
+function Show-DesktopHomeIcons {
+  $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+  New-Item -Path $adv -Force | Out-Null
+  Set-ItemProperty -Path $adv -Name HideIcons -Value 0 -Type DWord
+  foreach ($sub in @('NewStartPanel','ClassicStartMenu')) {
+    $p = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\$sub"
+    New-Item -Path $p -Force | Out-Null
+    Set-ItemProperty -Path $p -Name '{645FF040-5081-101B-9F08-00AA002F954E}' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $p -Name '{20D04FE0-3AEA-1069-A2D8-08002B30309D}' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+  }
+  try {
+    Add-Type -Namespace Native -Name ShellNotify -MemberDefinition @'
+      [System.Runtime.InteropServices.DllImport("shell32.dll")]
+      public static extern void SHChangeNotify(uint wEventId, uint uFlags, System.IntPtr dwItem1, System.IntPtr dwItem2);
+'@ -ErrorAction SilentlyContinue
+    [Native.ShellNotify]::SHChangeNotify(0x8000000, 0x1000, [IntPtr]::Zero, [IntPtr]::Zero)
+  } catch {}
+  Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+}
 function Remove-ExtraAdminIcons {
   $keepDesk = Get-ExplorerDesktop
   $keepLnk = Join-Path $keepDesk 'Admin Setup.lnk'
@@ -69,16 +88,12 @@ function Remove-ExtraAdminIcons {
     (Join-Path $env:PUBLIC 'Desktop\Admin Setup.lnk'),
     (Join-Path $env:PUBLIC 'Desktop\Admin Setup.cmd'),
     (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'),
-    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.cmd'),
-    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'),
     (Join-Path $homeRoot 'Admin Setup.cmd')
   )
   foreach ($p in $extra) {
     if (-not $p) { continue }
     if ($keepLnk -and (([string]$p).ToLower() -eq ([string]$keepLnk).ToLower())) { continue }
-    if (Test-Path -LiteralPath $p) {
-      try { Remove-Item -LiteralPath $p -Force -ErrorAction Stop; Write-Log "Removed extra $p" } catch {}
-    }
+    if (Test-Path -LiteralPath $p) { try { Remove-Item -LiteralPath $p -Force } catch {} }
   }
 }
 function Install-DesktopIcon {
@@ -94,7 +109,10 @@ function Install-DesktopIcon {
   $sc.Description = 'Admin Setup'
   $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
   $sc.Save()
+  Show-DesktopHomeIcons
   Write-Host "Desktop icon: $lnkPath"
+  Write-Host 'Desktop icons were un-hidden and Explorer refreshed.'
+  Write-Host 'To pin beside Start: right-click the desktop icon -> Show more options -> Pin to taskbar.'
   return $lnkPath
 }
 if (-not $SkipDesktopIcon) { Install-DesktopIcon | Out-Null }
