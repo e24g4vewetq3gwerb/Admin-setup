@@ -89,7 +89,7 @@ function Invoke-PackageExe {
     product      = 'Admin Setup'
     company      = 'Admin-setup'
     copyright    = 'Admin-setup'
-    version      = '1.1.0'
+    version      = '1.1.2'
     noConsole    = $false
   }
   & $invoke.Name @common
@@ -135,6 +135,13 @@ if ($self -and (Test-Path -LiteralPath $self)) {
 if (-not (Test-Path -LiteralPath $persist) -and $self -and (Test-Path $self)) {
   Copy-Item -LiteralPath $self -Destination $persist -Force
 }
+function Clear-DownloadBlock([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+  try { Unblock-File -LiteralPath $Path -ErrorAction SilentlyContinue } catch {}
+  try { Remove-Item -LiteralPath ($Path + ':Zone.Identifier') -Force -ErrorAction SilentlyContinue } catch {}
+}
+Clear-DownloadBlock $persist
+Clear-DownloadBlock $self
 function Get-ExplorerDesktop {
   try { return (New-Object -ComObject Shell.Application).NameSpace(0x10).Self.Path } catch {}
   return [Environment]::GetFolderPath('Desktop')
@@ -251,6 +258,7 @@ function Save-Url {
   if (-not $ok) { $curl = "$env:SystemRoot\System32\curl.exe"; if (Test-Path $curl) { & $curl -L --retry 3 -o $Dest $Url; if ($LASTEXITCODE -eq 0) { $ok = $true } } }
   if (-not (Test-Path -LiteralPath $Dest)) { throw "Download produced no file: $Url" }
   if ((Get-Item -LiteralPath $Dest).Length -lt 500KB) { throw "Download too small: $Url" }
+  Clear-DownloadBlock $Dest
   return $Dest
 }
 function Get-GrokBotSetupInfo {
@@ -311,6 +319,27 @@ function Invoke-OfferInstall {
   return $true
 }
 if (-not $SkipOffer) { Invoke-OfferInstall | Out-Null }
+function Confirm-ResetIfAppsMissing {
+  $g = Test-GrokBotInstalled
+  $c = Test-ChromeInstalled
+  if ($g -and $c) { return $true }
+  $missing = @()
+  if (-not $g) { $missing += 'Grok Bot' }
+  if (-not $c) { $missing += 'Google Chrome' }
+  $lines = @(
+    'These apps are still not installed:',
+    '',
+    (($missing | ForEach-Object { "- $_" }) -join "`r`n"),
+    '',
+    'Windows may have blocked a download, or the installer did not finish.',
+    '',
+    'Yes = continue with the app wipe / reset anyway.',
+    'No  = stop. Nothing else will be removed or restarted.'
+  )
+  $caption = 'Admin Setup - confirm reset'
+  $r = [Windows.Forms.MessageBox]::Show(($lines -join "`r`n"), $caption, [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Warning)
+  return ($r -eq [Windows.Forms.DialogResult]::Yes)
+}
 function Invoke-LightWipe {
   $protect = @('Realtek*','Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*','Microsoft .NET*','Microsoft Edge WebView2*','Windows PC Health Check*','Update for *','Security Update*','Intel*','NVIDIA*','AMD*','Chipset*','Canon *','Google Chrome*','Grok Bot*','Windows Terminal*')
   $paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
@@ -332,6 +361,15 @@ function Invoke-LightWipe {
   return $changed
 }
 $didWipe = $false
+$wantReset = $true
+if (-not $SkipWipe -and ($Apply -or $UninstallNotKept -or $Restart -or $RestartIfNeeded)) {
+  $wantReset = Confirm-ResetIfAppsMissing
+}
+if (-not $wantReset) {
+  Write-Log 'Reset skipped: Grok Bot and/or Chrome still missing, user said No.'
+  Write-Host "Reset skipped. Log: $log"
+  return
+}
 if (-not $SkipWipe -and ($Apply -or $UninstallNotKept)) { $didWipe = Invoke-LightWipe }
 Write-Host "Log: $log"
 if ($Restart -or ($RestartIfNeeded -and $didWipe)) { shutdown.exe /r /t 60 /c 'Admin-Setup finished.' }
