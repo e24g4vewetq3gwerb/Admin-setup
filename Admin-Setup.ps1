@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Admin Setup. One desktop icon on the home screen, then optional installs.
-  Package a double-click .exe with:  .\Admin-Setup.ps1 -Package
+  Admin Setup. Puts an Admin Setup icon on the Desktop.
+  Double-click the icon to offer Grok Bot + Chrome, wipe leftover apps, then restart.
 #>
 [CmdletBinding()]
 param(
@@ -14,9 +14,7 @@ param(
   [switch]$DesktopIcon,
   [switch]$SkipDesktopIcon,
   [switch]$IconOnly,
-  [switch]$ForceAsk,
-  [switch]$Package,
-  [string]$OutFile
+  [switch]$ForceAsk
 )
 Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
@@ -39,79 +37,14 @@ function Get-SelfPath {
     (Get-Prop $MyInvocation.MyCommand 'Path'),
     (Get-Prop $MyInvocation.MyCommand 'Definition')
   )) {
-    if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    if ($candidate -and $candidate -like '*.ps1' -and (Test-Path -LiteralPath $candidate)) { return $candidate }
   }
-  try {
-    $proc = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    if ($proc -and (Test-Path -LiteralPath $proc)) { return $proc }
-  } catch {}
   return $null
 }
-function Test-IsPackagedExe([string]$Path) {
-  if (-not $Path) { return $false }
-  return ([IO.Path]::GetExtension($Path) -eq '.exe')
-}
-function Invoke-PackageExe {
-  param(
-    [Parameter(Mandatory)][string]$InputFile,
-    [string]$OutputFile
-  )
-  if (-not $IsWindows -and $env:OS -ne 'Windows_NT') {
-    throw 'Packaging a .exe requires Windows PowerShell or PowerShell on Windows.'
-  }
-  if (-not (Test-Path -LiteralPath $InputFile)) { throw "Input script not found: $InputFile" }
-  if ([IO.Path]::GetExtension($InputFile) -ne '.ps1') {
-    throw 'Package from Admin-Setup.ps1, not from an already-built .exe.'
-  }
-  if (-not $OutputFile) {
-    $OutputFile = Join-Path (Split-Path -Parent $InputFile) 'Admin-Setup.exe'
-  }
-  $outDir = Split-Path -Parent $OutputFile
-  if ($outDir) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
-
-  $mod = Get-Module -ListAvailable -Name ps2exe | Select-Object -First 1
-  if (-not $mod) {
-    Write-Host 'Installing PS2EXE from PSGallery...'
-    try { Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch {}
-    Install-Module -Name ps2exe -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
-  }
-  Import-Module ps2exe -Force -ErrorAction Stop
-
-  Write-Host "Packaging $InputFile -> $OutputFile"
-  $invoke = Get-Command Invoke-ps2exe -ErrorAction SilentlyContinue
-  if (-not $invoke) { $invoke = Get-Command ps2exe -ErrorAction Stop }
-  $common = @{
-    inputFile    = $InputFile
-    outputFile   = $OutputFile
-    requireAdmin = $true
-    title        = 'Admin Setup'
-    description  = 'IT admin workstation setup'
-    product      = 'Admin Setup'
-    company      = 'Admin-setup'
-    copyright    = 'Admin-setup'
-    version      = '1.1.2'
-    noConsole    = $false
-  }
-  & $invoke.Name @common
-  if (-not (Test-Path -LiteralPath $OutputFile)) { throw "PS2EXE did not write $OutputFile" }
-  $item = Get-Item -LiteralPath $OutputFile
-  Write-Host ("Built {0} ({1:N0} bytes)" -f $item.FullName, $item.Length)
-  return $item.FullName
-}
-
-$self = Get-SelfPath
-$isExe = Test-IsPackagedExe $self
-
-if ($Package) {
-  $src = $self
-  if ($isExe -or -not $src) {
-    $guess = Join-Path (Get-Location) 'Admin-Setup.ps1'
-    if (Test-Path -LiteralPath $guess) { $src = $guess }
-    else { throw 'Run -Package against Admin-Setup.ps1 on Windows.' }
-  }
-  $built = Invoke-PackageExe -InputFile $src -OutputFile $OutFile
-  Write-Host "EXE ready: $built"
-  exit 0
+function Clear-DownloadBlock([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+  try { Unblock-File -LiteralPath $Path -ErrorAction SilentlyContinue } catch {}
+  try { Remove-Item -LiteralPath ($Path + ':Zone.Identifier') -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 $homeRoot = Join-Path $env:USERPROFILE 'admin'
@@ -121,8 +54,8 @@ function Write-Log([string]$m) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $m
   $line | Tee-Object -FilePath $log -Append
 }
-$persistName = if ($isExe) { 'Admin-Setup.exe' } else { 'Admin-Setup.ps1' }
-$persist = Join-Path $homeRoot $persistName
+$persist = Join-Path $homeRoot 'Admin-Setup.ps1'
+$self = Get-SelfPath
 if ($self -and (Test-Path -LiteralPath $self)) {
   try {
     $persistResolved = $null
@@ -135,16 +68,37 @@ if ($self -and (Test-Path -LiteralPath $self)) {
 if (-not (Test-Path -LiteralPath $persist) -and $self -and (Test-Path $self)) {
   Copy-Item -LiteralPath $self -Destination $persist -Force
 }
-function Clear-DownloadBlock([string]$Path) {
-  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
-  try { Unblock-File -LiteralPath $Path -ErrorAction SilentlyContinue } catch {}
-  try { Remove-Item -LiteralPath ($Path + ':Zone.Identifier') -Force -ErrorAction SilentlyContinue } catch {}
-}
 Clear-DownloadBlock $persist
 Clear-DownloadBlock $self
+
 function Get-ExplorerDesktop {
   try { return (New-Object -ComObject Shell.Application).NameSpace(0x10).Self.Path } catch {}
   return [Environment]::GetFolderPath('Desktop')
+}
+function Set-LnkRunAsAdmin([string]$LnkPath) {
+  if (-not (Test-Path -LiteralPath $LnkPath)) { return }
+  try {
+    $bytes = [IO.File]::ReadAllBytes($LnkPath)
+    if ($bytes.Length -gt 0x15) {
+      $bytes[0x15] = $bytes[0x15] -bor 0x20
+      [IO.File]::WriteAllBytes($LnkPath, $bytes)
+    }
+  } catch {}
+}
+function New-AdminSetupShortcut([string]$LnkPath) {
+  $dir = Split-Path -Parent $LnkPath
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $w = New-Object -ComObject WScript.Shell
+  $sc = $w.CreateShortcut($LnkPath)
+  $sc.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+  $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$persist`" -Apply -UninstallNotKept -Restart"
+  $sc.WorkingDirectory = $homeRoot
+  $sc.WindowStyle = 1
+  $sc.Description = 'Wipe leftover apps and restart'
+  $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
+  $sc.Save()
+  Set-LnkRunAsAdmin $LnkPath
+  return $LnkPath
 }
 function Show-DesktopHomeIcons {
   $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
@@ -166,70 +120,55 @@ function Show-DesktopHomeIcons {
   Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 }
 function Remove-ExtraAdminIcons {
-  $keepDesk = Get-ExplorerDesktop
-  $keepLnk = Join-Path $keepDesk 'Admin Setup.lnk'
+  $keep = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  $desk = Get-ExplorerDesktop
+  [void]$keep.Add((Join-Path $desk 'Admin Setup.lnk'))
+  [void]$keep.Add((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'))
   $extra = @(
     (Join-Path $env:USERPROFILE 'Desktop\Admin Setup.lnk'),
     (Join-Path $env:USERPROFILE 'Desktop\Admin Setup.cmd'),
+    (Join-Path $env:USERPROFILE 'Desktop\Admin-Setup.exe'),
     (Join-Path $env:USERPROFILE 'OneDrive\Desktop\Admin Setup.lnk'),
     (Join-Path $env:USERPROFILE 'OneDrive\Desktop\Admin Setup.cmd'),
+    (Join-Path $env:USERPROFILE 'OneDrive\Desktop\Admin-Setup.exe'),
     (Join-Path $env:PUBLIC 'Desktop\Admin Setup.lnk'),
     (Join-Path $env:PUBLIC 'Desktop\Admin Setup.cmd'),
-    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'),
-    (Join-Path $homeRoot 'Admin Setup.cmd')
+    (Join-Path $env:PUBLIC 'Desktop\Admin-Setup.exe'),
+    (Join-Path $homeRoot 'Admin Setup.cmd'),
+    (Join-Path $homeRoot 'Admin-Setup.exe')
   )
   foreach ($p in $extra) {
     if (-not $p) { continue }
-    if ($keepLnk -and (([string]$p).ToLower() -eq ([string]$keepLnk).ToLower())) { continue }
+    if ($keep.Contains($p)) { continue }
     if (Test-Path -LiteralPath $p) { try { Remove-Item -LiteralPath $p -Force } catch {} }
   }
 }
 function Install-DesktopIcon {
   Remove-ExtraAdminIcons
-  $desk = Get-ExplorerDesktop
-  $lnkPath = Join-Path $desk 'Admin Setup.lnk'
-  $w = New-Object -ComObject WScript.Shell
-  $sc = $w.CreateShortcut($lnkPath)
-  if ($isExe -and (Test-Path -LiteralPath $persist)) {
-    $sc.TargetPath = $persist
-    $sc.Arguments = '-Apply -UninstallNotKept -RestartIfNeeded'
-    $sc.IconLocation = "$persist,0"
-  } else {
-    $sc.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$persist`" -Apply -UninstallNotKept -RestartIfNeeded"
-    $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
-  }
-  $sc.WorkingDirectory = $homeRoot
-  $sc.WindowStyle = 1
-  $sc.Description = 'Admin Setup'
-  $sc.Save()
+  $deskLnk = Join-Path (Get-ExplorerDesktop) 'Admin Setup.lnk'
+  $startLnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'
+  New-AdminSetupShortcut $deskLnk | Out-Null
+  New-AdminSetupShortcut $startLnk | Out-Null
   Show-DesktopHomeIcons
-  Write-Host "Desktop icon: $lnkPath"
-  Write-Host 'Desktop icons were un-hidden and Explorer refreshed.'
-  Write-Host 'To pin beside Start: right-click the desktop icon -> Show more options -> Pin to taskbar.'
-  return $lnkPath
+  Write-Host "Desktop icon: $deskLnk"
+  Write-Host 'Double-click it any time to wipe leftover apps and restart (UAC).'
+  return $deskLnk
 }
 if (-not $SkipDesktopIcon) { Install-DesktopIcon | Out-Null }
 if ($IconOnly) { exit 0 }
 if (-not (Test-IsAdmin)) {
-  $pass = @()
-  if ($Apply) { $pass += '-Apply' }
-  if ($UninstallNotKept) { $pass += '-UninstallNotKept' }
-  if ($Restart) { $pass += '-Restart' }
-  if ($RestartIfNeeded) { $pass += '-RestartIfNeeded' }
-  if ($SkipWipe) { $pass += '-SkipWipe' }
-  if ($SkipOffer) { $pass += '-SkipOffer' }
-  if ($ForceAsk) { $pass += '-ForceAsk' }
-  if ($isExe -and (Test-Path -LiteralPath $persist)) {
-    $arg = @('-SkipDesktopIcon') + $pass
-    Start-Process -FilePath $persist -Verb RunAs -ArgumentList $arg | Out-Null
-  } else {
-    $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$persist`"", '-SkipDesktopIcon') + $pass
-    Start-Process powershell.exe -Verb RunAs -ArgumentList $arg | Out-Null
-  }
+  $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$persist`"", '-SkipDesktopIcon')
+  if ($Apply) { $arg += '-Apply' }
+  if ($UninstallNotKept) { $arg += '-UninstallNotKept' }
+  if ($Restart) { $arg += '-Restart' }
+  if ($RestartIfNeeded) { $arg += '-RestartIfNeeded' }
+  if ($SkipWipe) { $arg += '-SkipWipe' }
+  if ($SkipOffer) { $arg += '-SkipOffer' }
+  if ($ForceAsk) { $arg += '-ForceAsk' }
+  Start-Process powershell.exe -Verb RunAs -ArgumentList $arg | Out-Null
   return
 }
-Write-Log "==== Admin-Setup start elevated=$(Test-IsAdmin) packaged=$isExe ===="
+Write-Log "==== Admin-Setup start elevated=$(Test-IsAdmin) ===="
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 function Test-NameLike([string]$Name, [string[]]$Patterns) {
   if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
