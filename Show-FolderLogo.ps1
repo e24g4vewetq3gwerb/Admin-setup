@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Two circular badges: folder and PowerShell. Whole circle is clickable.
+  Three circular badges: folder, PowerShell, rerun Admin script.
 #>
 [CmdletBinding()]
 param()
@@ -15,6 +15,7 @@ if (-not $mutex.WaitOne(0, $false)) { return }
 $size = 58
 $gap = 16
 $pad = 2
+$count = 3
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Launch'
@@ -22,12 +23,13 @@ $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $form.ShowInTaskbar = $false
 $form.TopMost = $true
-$form.Size = New-Object System.Drawing.Size((($size * 2) + $gap + ($pad * 2)), ($size + ($pad * 2)))
+$form.Size = New-Object System.Drawing.Size((($size * $count) + ($gap * ($count - 1)) + ($pad * 2)), ($size + ($pad * 2)))
 $form.BackColor = [System.Drawing.Color]::Black
 
+function Get-BadgeX([int]$Index) { return $pad + ($Index * ($size + $gap)) }
+
 $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-$path.AddEllipse($pad, $pad, $size, $size)
-$path.AddEllipse(($pad + $size + $gap), $pad, $size, $size)
+0..($count - 1) | ForEach-Object { $path.AddEllipse((Get-BadgeX $_), $pad, $size, $size) }
 $form.Region = New-Object System.Drawing.Region($path)
 
 function Move-ToBottom {
@@ -38,55 +40,61 @@ function Move-ToBottom {
 }
 Move-ToBottom
 
-function Get-AppIcon([string]$Exe, [int]$Px) {
+function Get-AppIcon([string]$Exe) {
   try {
     $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Exe)
     if ($ico) { return $ico.ToBitmap() }
   } catch {}
-  $bmp = New-Object System.Drawing.Bitmap $Px, $Px
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.Clear([System.Drawing.Color]::Transparent)
-  $g.Dispose()
-  return $bmp
+  return $null
 }
 
-$folderIcon = Get-AppIcon (Join-Path $env:SystemRoot 'explorer.exe') 32
-$psIcon = Get-AppIcon (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') 32
+$scriptPath = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
+if (-not (Test-Path -LiteralPath $scriptPath)) {
+  $here = Split-Path -Parent $PSCommandPath
+  $alt = Join-Path $here 'Clear-Apps-And-Tray.ps1'
+  if (Test-Path -LiteralPath $alt) { $scriptPath = $alt }
+}
+
+$folderIcon = Get-AppIcon (Join-Path $env:SystemRoot 'explorer.exe')
+$psIcon = Get-AppIcon (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+$scriptIcon = $null
+if (Test-Path -LiteralPath $scriptPath) { $scriptIcon = Get-AppIcon $scriptPath }
+if (-not $scriptIcon) { $scriptIcon = $psIcon }
+
 $yellow = [System.Drawing.Color]::FromArgb(255, 196, 37)
 $blue = [System.Drawing.Color]::FromArgb(55, 148, 230)
+$green = [System.Drawing.Color]::FromArgb(46, 204, 113)
 $fillA = [System.Drawing.Color]::FromArgb(36, 36, 36)
 $fillB = [System.Drawing.Color]::FromArgb(22, 32, 48)
+$fillC = [System.Drawing.Color]::FromArgb(20, 40, 28)
 
 function Draw-Badge($g, [int]$x, [int]$y, $fill, $ring, $img) {
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-  $outer = New-Object System.Drawing.Rectangle($x, $y, $size, $size)
   $brush = New-Object System.Drawing.SolidBrush($fill)
-  $g.FillEllipse($brush, $outer)
+  $g.FillEllipse($brush, $x, $y, $size, $size)
   $brush.Dispose()
   $pen = New-Object System.Drawing.Pen($ring, 3)
-  $inset = New-Object System.Drawing.Rectangle(($x + 2), ($y + 2), ($size - 5), ($size - 5))
-  $g.DrawEllipse($pen, $inset)
+  $g.DrawEllipse($pen, ($x + 2), ($y + 2), ($size - 5), ($size - 5))
   $pen.Dispose()
   if ($img) {
     $iw = 28
-    $ix = $x + [int](($size - $iw) / 2)
-    $iy = $y + [int](($size - $iw) / 2)
-    $g.DrawImage($img, $ix, $iy, $iw, $iw)
+    $g.DrawImage($img, ($x + [int](($size - $iw) / 2)), ($y + [int](($size - $iw) / 2)), $iw, $iw)
   }
 }
 
 $form.add_Paint({
   param($sender, $e)
   $e.Graphics.Clear([System.Drawing.Color]::Black)
-  Draw-Badge $e.Graphics $pad $pad $fillA $yellow $folderIcon
-  Draw-Badge $e.Graphics ($pad + $size + $gap) $pad $fillB $blue $psIcon
+  Draw-Badge $e.Graphics (Get-BadgeX 0) $pad $fillA $yellow $folderIcon
+  Draw-Badge $e.Graphics (Get-BadgeX 1) $pad $fillB $blue $psIcon
+  Draw-Badge $e.Graphics (Get-BadgeX 2) $pad $fillC $green $scriptIcon
 })
 
 function Test-InCircle([int]$px, [int]$py, [int]$cx, [int]$cy) {
-  $dx = $px - ($cx + ($size / 2))
-  $dy = $py - ($cy + ($size / 2))
-  return (($dx * $dx) + ($dy * $dy)) -le [Math]::Pow(($size / 2), 2)
+  $dx = $px - ($cx + ($size / 2.0))
+  $dy = $py - ($cy + ($size / 2.0))
+  return (($dx * $dx) + ($dy * $dy)) -le [Math]::Pow(($size / 2.0), 2)
 }
 
 function Open-Folder {
@@ -98,12 +106,20 @@ function Open-PowerShell {
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   Start-Process -FilePath $ps -WorkingDirectory $env:USERPROFILE | Out-Null
 }
+function Run-AdminScript {
+  if (-not (Test-Path -LiteralPath $scriptPath)) { return }
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Start-Process -FilePath $ps -Verb RunAs -ArgumentList @(
+    '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`""
+  ) | Out-Null
+}
 
 $form.add_MouseDown({
   param($sender, $e)
   if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
-  if (Test-InCircle $e.X $e.Y $pad $pad) { Open-Folder; return }
-  if (Test-InCircle $e.X $e.Y ($pad + $size + $gap) $pad) { Open-PowerShell }
+  if (Test-InCircle $e.X $e.Y (Get-BadgeX 0) $pad) { Open-Folder; return }
+  if (Test-InCircle $e.X $e.Y (Get-BadgeX 1) $pad) { Open-PowerShell; return }
+  if (Test-InCircle $e.X $e.Y (Get-BadgeX 2) $pad) { Run-AdminScript }
 })
 
 $form.add_Shown({ Move-ToBottom; $form.Invalidate() })
