@@ -82,7 +82,9 @@ if ($Mode -eq 'Badges') {
   function Get-ExeImage([string]$Path) {
     try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path); if ($ico) { return Convert-ToBitmapSource $ico.ToBitmap() } } catch { return $null }
   }
-  $selfPath = Get-SelfPath
+  $script:RunScript = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
+  $found = Get-SelfPath
+  if ($found) { $script:RunScript = $found }
   $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Launch" WindowStyle="None" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize" SizeToContent="WidthAndHeight">
   <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
@@ -116,11 +118,16 @@ if ($Mode -eq 'Badges') {
   $window.FindName('BtnFolder').Add_MouseLeftButtonUp({ Start-Process explorer.exe $env:USERPROFILE | Out-Null })
   $window.FindName('BtnPs').Add_MouseLeftButtonUp({ Start-Process (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null })
   $window.FindName('BtnScript').Add_MouseLeftButtonUp({
-    $answer = [System.Windows.MessageBox]::Show("Run Clear Apps and Tray again?`n`nContinue?", 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
+    $answer = [System.Windows.MessageBox]::Show("Run Clear Apps and Tray again? Same as restarting the script.`n`nContinue?", 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
     if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
-    if ($selfPath) {
-      Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList @('-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$selfPath`"") | Out-Null
+    $target = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
+    if (-not (Test-Path -LiteralPath $target)) { $target = $script:RunScript }
+    if (-not $target -or -not (Test-Path -LiteralPath $target)) {
+      [System.Windows.MessageBox]::Show("Script not found.`n$target", 'Admin Setup') | Out-Null
+      return
     }
+    $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    Start-Process -FilePath $ps -Verb RunAs -ArgumentList @('-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$target`"") | Out-Null
   })
   $window.Add_ContentRendered({ Move-ToBottom })
   $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -142,7 +149,7 @@ function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
-Write-Log 'Clear-Apps-And-Tray 20260919 dialog restore'
+Write-Log 'Clear-Apps-And-Tray 20260919 trash relaunch'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
