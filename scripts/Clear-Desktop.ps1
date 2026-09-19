@@ -5,7 +5,7 @@
 .DESCRIPTION
   - Sets desktop background to solid black (clears wallpaper image)
   - Hides all desktop icons (HideIcons=1) including Recycle Bin CLSID
-  - Deletes files/folders on the user Desktop and Public Desktop
+  - Deletes files/folders on the user Desktop and Public Desktop (keeps Admin Setup.lnk)
   - Restarts Explorer so the change shows immediately
 
 .EXAMPLE
@@ -99,6 +99,11 @@ public class AdminWallpaper {
   foreach ($d in @($userDesk, $publicDesk)) {
     if (-not (Test-Path $d)) { continue }
     Get-ChildItem $d -Force -EA SilentlyContinue | ForEach-Object {
+      # Keep the Admin Setup launcher icon
+      if ($_.Name -eq 'Admin Setup.lnk' -or $_.Name -eq 'desktop.ini') {
+        L "KEEP $($_.FullName)"
+        return
+      }
       try {
         Remove-Item $_.FullName -Recurse -Force -EA Stop
         L "REMOVED $($_.FullName)"

@@ -28,8 +28,6 @@ Download / run Admin-Setup.ps1 -Apply -UninstallNotKept -RestartIfNeeded
                  No  → leave Start-only
 ```
 
----
-
 ## Quick start (elevated PowerShell)
 
 ```powershell
@@ -40,6 +38,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Admin-Setup.ps1 -Apply -Unins
 ```
 
 Cancel a pending reboot with `shutdown /a`.
+
+### Desktop icon (run anytime)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Install-AdminSetup-Shortcut.ps1
+```
+
+Creates **Admin Setup** on the Desktop and in the Start Menu. Double-click to run the wipe (UAC prompt). The Grok Bot + Chrome question still appears **only after restart**.
+
+If desktop icons are hidden (bare desktop), open Start and type `Admin Setup`.
 
 ### Offer only (no wipe)
 
@@ -62,7 +70,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Minimal-Taskbar.ps1 -Apply -D
 |--------|------|
 | **Admin-Setup.ps1** | Master entry: harden → wipe (`-KeepProfile DriversOnly`) → unpin → StartOnly taskbar → register offer → restart |
 | **Cleanup-Background.ps1** | Scan + uninstall; Settings-style app count; disable RDP client; register offer on restart |
-| **Clear-Desktop.ps1** | Solid black wallpaper; hide all desktop icons (incl Recycle Bin); empty Desktop folders |
+| **Clear-Desktop.ps1** | Solid black wallpaper; hide all desktop icons (incl Recycle Bin); empty Desktop folders (keeps Admin Setup.lnk) |
+| **Install-AdminSetup-Shortcut.ps1** / **Run-Admin-Setup.cmd** | Desktop + Start Menu icon to run Admin-Setup elevated anytime |
 | **Offer-GrokAndChrome.ps1** | Resolve latest Grok + Chrome; Yes/No; install; pin via `-DockChromeGrok` |
 | **Offer-GrokBot.ps1** | Compatibility wrapper → Offer-GrokAndChrome.ps1 |
 | **Minimal-Taskbar.ps1** | StartOnly (wipe) or `-DockChromeGrok` / `-DockChromeCursorGrok` |
