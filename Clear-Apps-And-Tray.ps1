@@ -3,19 +3,8 @@
   Clear removable apps and empty the Windows system tray.
 
 .DESCRIPTION
-  Intended for a trusted admin session on a lab / kiosk / reset box.
-  Uninstalls removable Win32 programs and removable Store packages,
-  then hides notification-area icons and extra taskbar chrome.
-
-  Protects drivers, runtimes, Edge/WebView2, and non-removable system
-  packages so the machine can still boot. Does not install anything.
-  Does not keep Chrome, Grok Bot, or other third-party apps.
-  Does not restart the computer or Explorer.
-
-  Windows UAC still appears if this process is not elevated.
-
-.EXAMPLE
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
+  Uninstalls removable Win32 and Store apps, then writes tray-hide
+  registry values. Does not start explorer.exe, does not restart the PC.
 #>
 [CmdletBinding()]
 param(
@@ -71,6 +60,9 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
+Write-Host 'Clear-Apps-And-Tray 20260919c — no Explorer launch'
+Write-Log 'Clear-Apps-And-Tray 20260919c — no Explorer launch'
+
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
   if (-not $self) { $self = $MyInvocation.MyCommand.Definition }
@@ -86,10 +78,14 @@ if (-not (Test-IsAdmin)) {
   return
 }
 
-Write-Log "==== Clear-Apps-And-Tray start user=$env:USERNAME computer=$env:COMPUTERNAME ===="
+Write-Log "==== start user=$env:USERNAME computer=$env:COMPUTERNAME ===="
 
 function Invoke-UninstallCommand([string]$Command) {
   if ([string]::IsNullOrWhiteSpace($Command)) { return $false }
+  if ($Command -match '(?i)explorer(\.exe)?') {
+    Write-Log "Skip uninstall that would call Explorer: $Command"
+    return $false
+  }
   try {
     if ($Command -match '\{([0-9A-Fa-f-]{36})\}') {
       $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList @("/X{$($Matches[1])}", '/qn', '/norestart') -Wait -PassThru -WindowStyle Hidden
@@ -103,6 +99,10 @@ function Invoke-UninstallCommand([string]$Command) {
     } elseif ($Command -match '^(\S+)\s*(.*)$') {
       $exe = $Matches[1]
       $args = [string]$Matches[2]
+    }
+    if ($exe -match '(?i)explorer(\.exe)?$') {
+      Write-Log "Skip explorer.exe uninstall: $Command"
+      return $false
     }
     if (-not (Test-Path -LiteralPath $exe)) { return $false }
     $low = "$args".ToLowerInvariant()
@@ -224,25 +224,20 @@ function Invoke-ClearStoreApps {
 }
 
 function Set-EmptySystemTray {
-  Write-Host 'Clearing system tray and extra taskbar items...'
-  Write-Log 'Set-EmptySystemTray'
+  Write-Host 'Writing tray hide values (no Explorer restart)...'
+  Write-Log 'Set-EmptySystemTray registry only'
 
-  $policyPaths = @(
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer',
-    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
-  )
-  foreach ($path in $policyPaths) {
-    New-Item -Path $path -Force | Out-Null
-    $vals = @{
-      NoTrayItemsDisplay = 1
-      HideSCAHealth      = 1
-      HideSCAMeetNow     = 1
-      NoAutoTrayNotify   = 1
-      HideLocaleBar      = 1
-    }
-    foreach ($k in $vals.Keys) {
-      try { New-ItemProperty -Path $path -Name $k -Value $vals[$k] -PropertyType DWord -Force | Out-Null } catch {}
-    }
+  $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+  New-Item -Path $path -Force | Out-Null
+  $vals = @{
+    NoTrayItemsDisplay = 1
+    HideSCAHealth      = 1
+    HideSCAMeetNow     = 1
+    NoAutoTrayNotify   = 1
+    HideLocaleBar      = 1
+  }
+  foreach ($k in $vals.Keys) {
+    try { New-ItemProperty -Path $path -Name $k -Value $vals[$k] -PropertyType DWord -Force | Out-Null } catch {}
   }
 
   $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
@@ -276,14 +271,6 @@ function Set-EmptySystemTray {
   New-Item -Path $lang -Force | Out-Null
   try { New-ItemProperty -Path $lang -Name 'ShowStatus' -Value 3 -PropertyType DWord -Force | Out-Null } catch {}
   try { New-ItemProperty -Path $lang -Name 'ExtraIconsOnMinimized' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
-
-  $pinned = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
-  if (Test-Path -LiteralPath $pinned) {
-    Get-ChildItem -LiteralPath $pinned -ErrorAction SilentlyContinue | ForEach-Object {
-      try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
-    }
-  }
-  try { Remove-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband' -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 $win32 = 0
