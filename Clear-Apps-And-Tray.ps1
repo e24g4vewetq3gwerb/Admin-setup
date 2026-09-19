@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-  Clear removable apps, hide the taskbar, show a folder logo to open files.
+  Clear removable apps, hide the taskbar, show folder / PowerShell / script badges.
 #>
 [CmdletBinding()]
 param(
   [switch]$SkipWipe,
-  [switch]$SkipTray
+  [switch]$SkipTray,
+  [switch]$ShowReport
 )
 Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
@@ -39,13 +40,18 @@ function Test-NameLike([string]$Name, [string[]]$Patterns) {
 $homeRoot = Join-Path $env:USERPROFILE 'admin'
 New-Item -ItemType Directory -Force -Path $homeRoot | Out-Null
 $log = Join-Path $homeRoot 'Clear-Apps-And-Tray.log'
+$script:ReportKept = New-Object System.Collections.Generic.List[string]
+$script:ReportCleared = New-Object System.Collections.Generic.List[string]
+$script:ReportFailed = New-Object System.Collections.Generic.List[string]
+$script:ReportFound = 0
+
 function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919j — Realtek not kept'
-Write-Log 'Clear-Apps-And-Tray 20260919j — Realtek not kept'
+Write-Host 'Clear-Apps-And-Tray 20260919k — report window'
+Write-Log 'Clear-Apps-And-Tray 20260919k — report window'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -53,7 +59,9 @@ if (-not (Test-IsAdmin)) {
   $arg = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$self`"")
   if ($SkipWipe) { $arg += '-SkipWipe' }
   if ($SkipTray) { $arg += '-SkipTray' }
-  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arg | Out-Null
+  if ($ShowReport) { $arg += '-ShowReport' }
+  $style = if ($ShowReport) { 'Hidden' } else { 'Normal' }
+  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -WindowStyle $style -ArgumentList $arg | Out-Null
   return
 }
 
@@ -67,21 +75,16 @@ function Stop-OldHelpers {
     }
   }
 }
-
 function Install-Helper([string]$Name) {
   $dest = Join-Path $homeRoot $Name
   $here = Split-Path -Parent (Get-SelfPath)
   $local = Join-Path $here $Name
-  if ($local -and (Test-Path -LiteralPath $local)) {
-    Copy-Item -LiteralPath $local -Destination $dest -Force
-  } else {
-    try {
-      Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/$Name" -OutFile $dest
-    } catch { Write-Log "$Name download failed: $($_.Exception.Message)" }
+  if ($local -and (Test-Path -LiteralPath $local)) { Copy-Item -LiteralPath $local -Destination $dest -Force }
+  else {
+    try { Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/$Name" -OutFile $dest } catch { Write-Log "$Name download failed: $($_.Exception.Message)" }
   }
   return $dest
 }
-
 function Start-HiddenScript([string]$Path, [string]$RunName) {
   if (-not (Test-Path -LiteralPath $Path)) { return }
   $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -89,9 +92,7 @@ function Start-HiddenScript([string]$Path, [string]$RunName) {
   $cmd = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Path`""
   New-ItemProperty -Path $runKey -Name $RunName -Value $cmd -PropertyType String -Force | Out-Null
   Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$Path`"") | Out-Null
-  Write-Log "Started $Path"
 }
-
 function Invoke-UninstallCommand([string]$Command) {
   if ([string]::IsNullOrWhiteSpace($Command)) { return $false }
   if ($Command -match '(?i)explorer(\.exe)?') { return $false }
@@ -120,18 +121,24 @@ function Invoke-ClearWin32Apps {
   foreach ($prog in @(Get-ItemProperty $paths -ErrorAction SilentlyContinue)) {
     $name = [string](Get-Prop $prog 'DisplayName')
     if (-not $name) { continue }
+    $script:ReportFound++
     $forced = Test-NameLike $name $force
     if (-not $forced) {
       $systemComponent = Get-Prop $prog 'SystemComponent'
-      if ($null -ne $systemComponent) { try { if ([int]$systemComponent -eq 1) { continue } } catch {} }
-      if (Test-NameLike $name $protect) { continue }
+      if ($null -ne $systemComponent) { try { if ([int]$systemComponent -eq 1) { [void]$script:ReportKept.Add("system  $name"); continue } } catch {} }
+      if (Test-NameLike $name $protect) { [void]$script:ReportKept.Add("keep    $name"); continue }
     }
     $uninstall = [string](Get-Prop $prog 'QuietUninstallString')
     if (-not $uninstall) { $uninstall = [string](Get-Prop $prog 'UninstallString') }
-    if (-not $uninstall) { continue }
+    if (-not $uninstall) { [void]$script:ReportKept.Add("no-uninstaller  $name"); continue }
     Write-Host "Uninstall $name"
     Write-Log "Uninstall $name :: $uninstall"
-    if (Invoke-UninstallCommand $uninstall) { $removed++ }
+    if (Invoke-UninstallCommand $uninstall) {
+      $removed++
+      [void]$script:ReportCleared.Add($name)
+    } else {
+      [void]$script:ReportFailed.Add($name)
+    }
   }
   return $removed
 }
@@ -143,12 +150,21 @@ function Invoke-ClearStoreApps {
     foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
       $name = [string]$pkg.Name
       if (-not $name) { continue }
-      if ($pkg.IsFramework -or $pkg.NonRemovable) { continue }
-      if (Test-NameLike $name $keepAppx) { continue }
-      if ($name -like 'Microsoft.Windows.*' -or $name -like 'Windows.*') { continue }
+      $script:ReportFound++
+      if ($pkg.IsFramework -or $pkg.NonRemovable) { [void]$script:ReportKept.Add("store-system  $name"); continue }
+      if (Test-NameLike $name $keepAppx) { [void]$script:ReportKept.Add("store-keep  $name"); continue }
+      if ($name -like 'Microsoft.Windows.*' -or $name -like 'Windows.*') { [void]$script:ReportKept.Add("store-keep  $name"); continue }
       Write-Host "Remove Store app $name"
-      try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue; $removed++ } catch {
-        try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $removed++ } catch {}
+      try {
+        Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+        $removed++
+        [void]$script:ReportCleared.Add("Store: $name")
+      } catch {
+        try {
+          Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue
+          $removed++
+          [void]$script:ReportCleared.Add("Store: $name")
+        } catch { [void]$script:ReportFailed.Add("Store: $name") }
       }
     }
   } catch {}
@@ -160,31 +176,63 @@ function Set-NoTaskbar {
   Stop-OldHelpers
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
   New-Item -Path $path -Force | Out-Null
-  foreach ($pair in @{
-    NoTrayItemsDisplay = 1; HideClock = 1; HideSCAHealth = 1; HideSCAMeetNow = 1
-    HideSCANetwork = 1; HideSCAVolume = 1; HideSCAPower = 1; NoAutoTrayNotify = 1
-    NoSetTaskbar = 1; NoTrayContextMenu = 1; HideLocaleBar = 1
-  }.GetEnumerator()) {
+  foreach ($pair in @{ NoTrayItemsDisplay = 1; HideClock = 1; HideSCAHealth = 1; HideSCAMeetNow = 1; HideSCANetwork = 1; HideSCAVolume = 1; HideSCAPower = 1; NoAutoTrayNotify = 1; NoSetTaskbar = 1; NoTrayContextMenu = 1; HideLocaleBar = 1 }.GetEnumerator()) {
     try { New-ItemProperty -Path $path -Name $pair.Key -Value $pair.Value -PropertyType DWord -Force | Out-Null } catch {}
   }
   $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
   New-Item -Path $adv -Force | Out-Null
-  foreach ($pair in @{
-    ShowTaskViewButton = 0; TaskbarDa = 0; TaskbarMn = 0; ShowCopilotButton = 0
-    ShowTaskbarChat = 0; SearchboxTaskbarMode = 0; ShowCortanaButton = 0
-  }.GetEnumerator()) {
+  foreach ($pair in @{ ShowTaskViewButton = 0; TaskbarDa = 0; TaskbarMn = 0; ShowCopilotButton = 0; ShowTaskbarChat = 0; SearchboxTaskbarMode = 0; ShowCortanaButton = 0 }.GetEnumerator()) {
     try { New-ItemProperty -Path $adv -Name $pair.Key -Value $pair.Value -PropertyType DWord -Force | Out-Null } catch {}
-  }
-  foreach ($key in @('StuckRects3','StuckRects2')) {
-    $p = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\$key"
-    if (-not (Test-Path $p)) { continue }
-    try {
-      $s = [byte[]](Get-ItemProperty -Path $p).Settings
-      if ($s -and $s.Length -gt 8) { $s[8] = [byte]($s[8] -bor 0x01); Set-ItemProperty -Path $p -Name Settings -Value $s }
-    } catch {}
   }
   Start-HiddenScript (Install-Helper 'Hide-Taskbar.ps1') 'AdminSetupHideTaskbar'
   Start-HiddenScript (Install-Helper 'Show-FolderLogo.ps1') 'AdminSetupFolderLogo'
+}
+
+function Show-WipeReport {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $lines = New-Object System.Collections.Generic.List[string]
+  [void]$lines.Add("Clear-Apps-And-Tray  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+  [void]$lines.Add("Computer  $env:COMPUTERNAME    User  $env:USERNAME")
+  [void]$lines.Add('')
+  [void]$lines.Add("Found     $($script:ReportFound)")
+  [void]$lines.Add("Cleared   $($script:ReportCleared.Count)")
+  [void]$lines.Add("Kept      $($script:ReportKept.Count)")
+  [void]$lines.Add("Failed    $($script:ReportFailed.Count)")
+  [void]$lines.Add('')
+  [void]$lines.Add('--- Cleared ---')
+  if ($script:ReportCleared.Count -eq 0) { [void]$lines.Add('(none)') }
+  else { $script:ReportCleared | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
+  [void]$lines.Add('')
+  [void]$lines.Add('--- Failed ---')
+  if ($script:ReportFailed.Count -eq 0) { [void]$lines.Add('(none)') }
+  else { $script:ReportFailed | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
+  [void]$lines.Add('')
+  [void]$lines.Add('--- Kept ---')
+  if ($script:ReportKept.Count -eq 0) { [void]$lines.Add('(none)') }
+  else { $script:ReportKept | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
+  [void]$lines.Add('')
+  [void]$lines.Add("Log file: $log")
+  $text = ($lines -join [Environment]::NewLine)
+  try { $text | Set-Content -Path (Join-Path $homeRoot 'Clear-Apps-And-Tray-last.txt') -Encoding UTF8 } catch {}
+
+  $win = New-Object System.Windows.Forms.Form
+  $win.Text = 'Admin Setup — what ran'
+  $win.Size = New-Object System.Drawing.Size(720, 560)
+  $win.StartPosition = 'CenterScreen'
+  $win.TopMost = $true
+  $box = New-Object System.Windows.Forms.TextBox
+  $box.Multiline = $true
+  $box.ScrollBars = 'Both'
+  $box.ReadOnly = $true
+  $box.WordWrap = $false
+  $box.Dock = 'Fill'
+  $box.Font = New-Object System.Drawing.Font('Consolas', 10)
+  $box.BackColor = [System.Drawing.Color]::FromArgb(24,24,24)
+  $box.ForeColor = [System.Drawing.Color]::FromArgb(220,220,220)
+  $box.Text = $text
+  $win.Controls.Add($box)
+  [void]$win.ShowDialog()
 }
 
 $win32 = 0; $store = 0
@@ -195,6 +243,5 @@ if ($SkipWipe) { Write-Log 'SkipWipe' } else {
 }
 if ($SkipTray) { Write-Log 'SkipTray' } else { Set-NoTaskbar }
 
-Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
-Write-Host 'Yellow folder / blue PowerShell / green gear at the bottom.'
-Write-Host "Log: $log"
+Write-Log "Finished. Win32=$win32 Store=$store"
+if ($ShowReport -or $true) { Show-WipeReport }
