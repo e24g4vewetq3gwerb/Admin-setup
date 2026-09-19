@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  One script: desktop icon option, ask Grok Bot + Chrome, download+install on Yes, optional wipe, then restart.
+  Admin Setup bundle. Installs a desktop app shortcut, offers Grok Bot + Chrome, downloads on Yes.
 #>
 [CmdletBinding()]
 param(
@@ -54,29 +54,53 @@ if ($self -and (Test-Path -LiteralPath $self)) {
 if (-not (Test-Path -LiteralPath $persist) -and $self -and (Test-Path $self)) {
   Copy-Item -LiteralPath $self -Destination $persist -Force
 }
+function Write-LaunchCmd([string]$CmdPath) {
+  $lines = @(
+    '@echo off',
+    'setlocal',
+    'set "PS1=%~dp0Admin-Setup.ps1"',
+    'if not exist "%PS1%" set "PS1=%USERPROFILE%\admin\Admin-Setup.ps1"',
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList ''-NoProfile -ExecutionPolicy Bypass -File \"%PS1%\" -Apply -UninstallNotKept -RestartIfNeeded''"'
+  )
+  Set-Content -LiteralPath $CmdPath -Value $lines -Encoding ASCII -Force
+  return $CmdPath
+}
 function Install-DesktopIcon {
   $targetPs1 = if (Test-Path -LiteralPath $persist) { $persist } else { $self }
   if (-not $targetPs1) { throw 'Cannot find Admin-Setup.ps1 to pin as icon.' }
+  $cmdPath = Join-Path $homeRoot 'Admin Setup.cmd'
+  Write-LaunchCmd $cmdPath | Out-Null
   $w = New-Object -ComObject WScript.Shell
-  $folders = @([Environment]::GetFolderPath('Desktop'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'))
+  $desktops = @()
+  foreach ($p in @(
+    [Environment]::GetFolderPath('Desktop'),
+    [Environment]::GetFolderPath('CommonDesktopDirectory'),
+    (Join-Path $env:USERPROFILE 'Desktop'),
+    (Join-Path $env:PUBLIC 'Desktop'),
+    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+  )) {
+    if ($p -and (Test-Path -LiteralPath $p)) { $desktops += $p }
+  }
+  $desktops = $desktops | Select-Object -Unique
   $made = @()
-  foreach ($folder in $folders) {
-    if (-not $folder) { continue }
-    New-Item -ItemType Directory -Force -Path $folder | Out-Null
-    $lnkPath = Join-Path $folder 'Admin Setup.lnk'
-    $sc = $w.CreateShortcut($lnkPath)
-    $sc.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$targetPs1`" -Apply -UninstallNotKept -RestartIfNeeded"
-    $sc.WorkingDirectory = $homeRoot
-    $sc.WindowStyle = 1
-    $sc.Description = 'Admin Setup'
-    $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
-    $sc.Save()
+  foreach ($folder in $desktops) {
     try {
-      $bytes = [IO.File]::ReadAllBytes($lnkPath)
-      if ($bytes.Length -gt 0x15) { $bytes[0x15] = $bytes[0x15] -bor 0x20; [IO.File]::WriteAllBytes($lnkPath, $bytes) }
-    } catch { Write-Log "Could not set RunAs on shortcut: $($_.Exception.Message)" }
-    $made += $lnkPath
+      Copy-Item -LiteralPath $cmdPath -Destination (Join-Path $folder 'Admin Setup.cmd') -Force -ErrorAction SilentlyContinue
+      $lnkPath = Join-Path $folder 'Admin Setup.lnk'
+      $sc = $w.CreateShortcut($lnkPath)
+      $sc.TargetPath = $cmdPath
+      $sc.WorkingDirectory = $homeRoot
+      $sc.WindowStyle = 1
+      $sc.Description = 'Admin Setup'
+      $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
+      $sc.Save()
+      try {
+        $bytes = [IO.File]::ReadAllBytes($lnkPath)
+        if ($bytes.Length -gt 0x15) { $bytes[0x15] = $bytes[0x15] -bor 0x20; [IO.File]::WriteAllBytes($lnkPath, $bytes) }
+      } catch {}
+      $made += $lnkPath
+    } catch { Write-Log "Icon failed in $folder : $($_.Exception.Message)" }
   }
   return $made
 }
@@ -98,18 +122,12 @@ if (-not (Test-IsAdmin)) {
 }
 Write-Log "==== Admin-Setup start elevated=$(Test-IsAdmin) ===="
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
-$wantIcon = $false
+$wantIcon = -not $SkipDesktopIcon
 if ($IconOnly -or $DesktopIcon) { $wantIcon = $true }
-elseif ($SkipDesktopIcon) { $wantIcon = $false }
-else {
-  $iconAsk = [Windows.Forms.MessageBox]::Show("Add an Admin Setup icon to the Desktop and Start menu?`r`n`r`nYes = one icon to run this bundle again (UAC / Run as admin).`r`nNo  = skip the icon.", 'Admin Setup - desktop icon', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
-  Write-Log "Desktop icon answer: $iconAsk"
-  $wantIcon = ($iconAsk -eq [Windows.Forms.DialogResult]::Yes)
-}
 if ($wantIcon) {
   $icons = Install-DesktopIcon
   Write-Log ("Desktop/Start icon: " + ($icons -join '; '))
-  Write-Host 'Desktop icon: Admin Setup'
+  Write-Host 'Installed Admin Setup app icon:'
   $icons | ForEach-Object { Write-Host "  $_" }
 } else { Write-Host 'Desktop icon skipped.' }
 if ($IconOnly) { Write-Host 'Icon only. Done.'; exit 0 }
