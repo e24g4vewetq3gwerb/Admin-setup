@@ -28,26 +28,32 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           powershell -NoProfile -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Package -OutFile "$PWD\dist\Admin-Setup.exe"
-          Get-Item .\dist\Admin-Setup.exe | Format-List FullName, Length, LastWriteTime
+          Compress-Archive -Path "$PWD\dist\Admin-Setup.exe" -DestinationPath "$PWD\dist\Admin-Setup.zip" -Force
+          Get-Item .\dist\Admin-Setup.exe, .\dist\Admin-Setup.zip | Format-Table Name, Length
 
-      - name: Upload exe artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Admin-Setup-exe
-          path: dist/Admin-Setup.exe
+          path: |
+            dist/Admin-Setup.exe
+            dist/Admin-Setup.zip
           if-no-files-found: error
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0
-          name: Admin Setup v1.1.0
+          tag_name: v1.1.1
+          name: Admin Setup v1.1.1
           body: |
-            Download **Admin-Setup.exe** below.
+            Prefer the zip if the browser blocks the raw exe.
 
-            Direct link: https://github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest/download/Admin-Setup.exe
+            - [Admin-Setup.zip](https://github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest/download/Admin-Setup.zip)
+            - [Admin-Setup.exe](https://github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest/download/Admin-Setup.exe)
 
-            Double-click the exe (UAC). Same switches as the script:
-            `Admin-Setup.exe -Apply -UninstallNotKept -RestartIfNeeded`
-          files: dist/Admin-Setup.exe
+            After extract: right-click exe -> Properties -> Unblock -> Apply.
+            Then run as administrator.
+          files: |
+            dist/Admin-Setup.exe
+            dist/Admin-Setup.zip
           make_latest: true
