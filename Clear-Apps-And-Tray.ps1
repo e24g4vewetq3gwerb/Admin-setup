@@ -17,10 +17,11 @@
   powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
 
 .EXAMPLE
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1 -NoRestart
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1 -Restart
 #>
 [CmdletBinding()]
 param(
+  [switch]$Restart,
   [switch]$NoRestart,
   [switch]$SkipWipe,
   [switch]$SkipTray,
@@ -83,6 +84,7 @@ if (-not (Test-IsAdmin)) {
     '-ExecutionPolicy', 'Bypass',
     '-File', "`"$self`""
   )
+  if ($Restart) { $arg += '-Restart' }
   if ($NoRestart) { $arg += '-NoRestart' }
   if ($SkipWipe) { $arg += '-SkipWipe' }
   if ($SkipTray) { $arg += '-SkipTray' }
@@ -319,8 +321,8 @@ Write-Log "Finished. Win32 attempts=$win32 Store attempts=$store"
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
 Write-Host "Log: $log"
 
-if ($NoRestart) {
-  Write-Log 'NoRestart set. Skipping reboot.'
+if ($NoRestart -or -not $Restart) {
+  Write-Log 'No restart (default). Pass -Restart to reboot.'
   return
 }
 

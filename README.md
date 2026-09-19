@@ -1,6 +1,6 @@
 # Clear apps and system tray
 
-One PowerShell script. Uninstall removable apps. Empty the notification area. Restart.
+One PowerShell script. Uninstall removable apps. Empty the notification area. Does not restart unless you pass `-Restart`.
 
 Repo: [e24g4vewetq3gwerb/Admin-setup](https://github.com/e24g4vewetq3gwerb/Admin-setup)
 
@@ -12,7 +12,7 @@ This replaces the old Admin Setup flow (no Grok Bot / Chrome offer, no desktop i
 2. Uninstalls removable Win32 apps (drivers, runtimes, Edge/WebView2 kept)
 3. Removes removable Store packages (Store, App Installer, security / lock / system packages kept)
 4. Hides the system tray and extra taskbar buttons
-5. Restarts (`shutdown /r /t 20`) unless `-NoRestart`
+5. Does **not** restart by default. Pass `-Restart` to schedule `shutdown /r /t 20`.
 
 Chrome, Grok Bot, Office, games, and other third-party apps are not kept.
 
@@ -35,10 +35,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
 
 | Switch | Effect |
 |--------|--------|
-| `-NoRestart` | Clear apps and tray, do not reboot |
+| `-Restart` | Schedule reboot after the script finishes |
+| `-NoRestart` | Same as default (no reboot). Kept so existing commands still work |
 | `-SkipWipe` | Only clear the tray |
 | `-SkipTray` | Only uninstall apps |
-| `-RestartDelaySeconds 20` | Seconds before reboot (default 20) |
+| `-RestartDelaySeconds 20` | Seconds before reboot when `-Restart` is set (default 20) |
 
 Cancel a pending reboot: `shutdown /a`
 
