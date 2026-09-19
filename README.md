@@ -1,8 +1,24 @@
 # Admin Setup
 
-One Windows script. One README. Optional desktop icon. Optional packaged `.exe`.
+One Windows script. One README. Optional desktop icon. Packaged `.exe` on GitHub Releases.
 
 Repo: [e24g4vewetq3gwerb/Admin-setup](https://github.com/e24g4vewetq3gwerb/Admin-setup)
+
+## Download the .exe
+
+**[Download Admin-Setup.exe](https://github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest/download/Admin-Setup.exe)**
+
+Releases page: [github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest](https://github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest)
+
+Windows one-liner:
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\admin" | Out-Null
+irm https://github.com/e24g4vewetq3gwerb/Admin-setup/releases/latest/download/Admin-Setup.exe -OutFile "$env:USERPROFILE\admin\Admin-Setup.exe"
+Start-Process "$env:USERPROFILE\admin\Admin-Setup.exe" -Verb RunAs
+```
+
+SmartScreen may warn on an unsigned exe. Choose More info → Run anyway, or build/sign your own copy.
 
 ## What it does
 
@@ -39,7 +55,7 @@ Default output: `Admin-Setup.exe` next to the script. The packaged exe:
 - Points the desktop shortcut at that exe
 - Relaunches itself elevated (no `powershell.exe -File`)
 
-GitHub Actions on `windows-latest` also builds the exe and uploads it as the **Admin-Setup-exe** workflow artifact whenever `Admin-Setup.ps1` changes.
+Pushing `Admin-Setup.ps1` rebuilds the exe and publishes it on **Releases**.
 
 ## Desktop icon option
 
@@ -88,7 +104,7 @@ Cancel a pending reboot: `shutdown /a`
 
 Log: `%USERPROFILE%\admin\Admin-Setup.log`
 
-## One-liner (download from GitHub)
+## One-liner (script from GitHub)
 
 ```powershell
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\admin" | Out-Null
