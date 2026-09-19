@@ -15,13 +15,20 @@ param(
   [switch]$IconOnly,
   [switch]$ForceAsk
 )
-Set-StrictMode -Version Latest
+Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 function Test-IsAdmin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   $p = New-Object Security.Principal.WindowsPrincipal($id)
   return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function Get-Prop {
+  param($Object, [string]$Name)
+  if ($null -eq $Object) { return $null }
+  $p = $Object.PSObject.Properties[$Name]
+  if ($p) { return $p.Value }
+  return $null
 }
 $homeRoot = Join-Path $env:USERPROFILE 'admin'
 New-Item -ItemType Directory -Force -Path $homeRoot | Out-Null
@@ -95,7 +102,7 @@ $wantIcon = $false
 if ($IconOnly -or $DesktopIcon) { $wantIcon = $true }
 elseif ($SkipDesktopIcon) { $wantIcon = $false }
 else {
-  $iconAsk = [Windows.Forms.MessageBox]::Show("Add an Admin Setup icon to the Desktop and Start menu?`r`n`r`nYes = one icon to run this bundle again (UAC / Run as admin).`r`nNo  = skip the icon.", 'Admin Setup — desktop icon', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
+  $iconAsk = [Windows.Forms.MessageBox]::Show("Add an Admin Setup icon to the Desktop and Start menu?`r`n`r`nYes = one icon to run this bundle again (UAC / Run as admin).`r`nNo  = skip the icon.", 'Admin Setup - desktop icon', [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
   Write-Log "Desktop icon answer: $iconAsk"
   $wantIcon = ($iconAsk -eq [Windows.Forms.DialogResult]::Yes)
 }
@@ -106,10 +113,17 @@ if ($wantIcon) {
   $icons | ForEach-Object { Write-Host "  $_" }
 } else { Write-Host 'Desktop icon skipped.' }
 if ($IconOnly) { Write-Host 'Icon only. Done.'; exit 0 }
-function Test-NameLike([string]$Name, [string[]]$Patterns) { foreach ($p in $Patterns) { if ($Name -like $p) { return $true } }; return $false }
+function Test-NameLike([string]$Name, [string[]]$Patterns) {
+  if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+  foreach ($p in $Patterns) { if ($Name -like $p) { return $true } }
+  return $false
+}
 function Get-UninstallHits([string[]]$Patterns) {
   Get-ItemProperty @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*') -ErrorAction SilentlyContinue |
-    Where-Object { $_.DisplayName -and (Test-NameLike $_.DisplayName $Patterns) }
+    Where-Object {
+      $dn = [string](Get-Prop $_ 'DisplayName')
+      $dn -and (Test-NameLike $dn $Patterns)
+    }
 }
 function Test-GrokBotInstalled {
   $exes = @("$env:LOCALAPPDATA\Programs\Grok Bot\Grok Bot.exe","${env:ProgramFiles}\Grok Bot\Grok Bot.exe","${env:ProgramFiles(x86)}\Grok Bot\Grok Bot.exe")
@@ -196,7 +210,7 @@ function Invoke-OfferInstall {
   $grok = Get-GrokBotSetupInfo; $chrome = Get-ChromeSetupInfo
   $needGrok = (-not $grokHave) -or $ForceAsk; $needChrome = (-not $chromeHave) -or $ForceAsk
   $lines = @('Install the latest apps now? (before any restart)','', $(if ($needGrok) { "- Grok Bot  $($grok.Version)" } else { '- Grok Bot  (already installed)' }), $(if ($needChrome) { "- Google Chrome  $($chrome.Version)" } else { '- Google Chrome  (already installed)' }),'','Yes = download and install now while this window is elevated.','No  = skip apps.')
-  $caption = 'Admin Setup — Grok Bot + Chrome'
+  $caption = 'Admin Setup - Grok Bot + Chrome'
   $result = [Windows.Forms.MessageBox]::Show(($lines -join "`r`n"), $caption, [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Question)
   if ($result -ne [Windows.Forms.DialogResult]::Yes) { return $false }
   $errors = New-Object System.Collections.Generic.List[string]
@@ -215,19 +229,25 @@ function Invoke-LightWipe {
   $protect = @('Realtek*','Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*','Microsoft .NET*','Microsoft Edge WebView2*','Windows PC Health Check*','Update for *','Security Update*','Intel*','NVIDIA*','AMD*','Chipset*','Canon *','Google Chrome*','Grok Bot*','Windows Terminal*')
   $paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
   $changed = $false
-  $programs = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and ($null -eq $_.SystemComponent -or [int]$_.SystemComponent -ne 1) }
+  $programs = @(Get-ItemProperty $paths -ErrorAction SilentlyContinue)
   foreach ($prog in $programs) {
-    if (Test-NameLike $prog.DisplayName $protect) { continue }
-    $u = $prog.QuietUninstallString; if (-not $u) { $u = $prog.UninstallString }; if (-not $u) { continue }
+    $dn = [string](Get-Prop $prog 'DisplayName')
+    if (-not $dn) { continue }
+    $sc = Get-Prop $prog 'SystemComponent'
+    if ($null -ne $sc) { try { if ([int]$sc -eq 1) { continue } } catch {} }
+    if (Test-NameLike $dn $protect) { continue }
+    $u = [string](Get-Prop $prog 'QuietUninstallString')
+    if (-not $u) { $u = [string](Get-Prop $prog 'UninstallString') }
+    if (-not $u) { continue }
     try {
       if ($u -match '\{([0-9A-Fa-f-]{36})\}') {
         $p = Start-Process msiexec.exe -ArgumentList "/X{$($Matches[1])}", '/qn', '/norestart' -Wait -PassThru
         if ($p.ExitCode -in 0, 3010) { $changed = $true }
-      } elseif ($prog.QuietUninstallString) {
-        Start-Process cmd.exe -ArgumentList '/c', $prog.QuietUninstallString -Wait -WindowStyle Hidden | Out-Null
+      } elseif (Get-Prop $prog 'QuietUninstallString') {
+        Start-Process cmd.exe -ArgumentList '/c', (Get-Prop $prog 'QuietUninstallString') -Wait -WindowStyle Hidden | Out-Null
         $changed = $true
       }
-    } catch { Write-Log "Uninstall failed $($prog.DisplayName): $($_.Exception.Message)" }
+    } catch { Write-Log "Uninstall failed ${dn}: $($_.Exception.Message)" }
   }
   return $changed
 }
