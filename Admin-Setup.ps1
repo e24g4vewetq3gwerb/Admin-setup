@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Admin Setup. Puts an Admin Setup icon on the Desktop.
-  Double-click the icon to offer Grok Bot + Chrome, wipe leftover apps, then restart.
+  Double-click the icon to offer Grok Bot + Chrome, clear other apps, then restart.
 #>
 [CmdletBinding()]
 param(
@@ -94,7 +94,7 @@ function New-AdminSetupShortcut([string]$LnkPath) {
   $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$persist`" -Apply -UninstallNotKept -Restart"
   $sc.WorkingDirectory = $homeRoot
   $sc.WindowStyle = 1
-  $sc.Description = 'Wipe leftover apps and restart'
+  $sc.Description = 'Clear apps and restart'
   $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
   $sc.Save()
   Set-LnkRunAsAdmin $LnkPath
@@ -151,7 +151,7 @@ function Install-DesktopIcon {
   New-AdminSetupShortcut $startLnk | Out-Null
   Show-DesktopHomeIcons
   Write-Host "Desktop icon: $deskLnk"
-  Write-Host 'Double-click it any time to wipe leftover apps and restart (UAC).'
+  Write-Host 'Double-click it any time to clear apps and restart (UAC).'
   return $deskLnk
 }
 if (-not $SkipDesktopIcon) { Install-DesktopIcon | Out-Null }
@@ -279,36 +279,91 @@ function Confirm-ResetIfAppsMissing {
   $r = [Windows.Forms.MessageBox]::Show(($lines -join "`r`n"), $caption, [Windows.Forms.MessageBoxButtons]::YesNo, [Windows.Forms.MessageBoxIcon]::Warning)
   return ($r -eq [Windows.Forms.DialogResult]::Yes)
 }
-function Invoke-LightWipe {
-  $protect = @('Realtek*','Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*','Microsoft .NET*','Microsoft Edge WebView2*','Windows PC Health Check*','Update for *','Security Update*','Intel*','NVIDIA*','AMD*','Chipset*','Canon *','Google Chrome*','Grok Bot*','Windows Terminal*')
-  $paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
+function Invoke-UninstallCommand([string]$Command) {
+  if ([string]::IsNullOrWhiteSpace($Command)) { return $false }
+  try {
+    if ($Command -match '\{([0-9A-Fa-f-]{36})\}') {
+      $p = Start-Process msiexec.exe -ArgumentList @("/X{$($Matches[1])}", '/qn', '/norestart') -Wait -PassThru
+      return ($p.ExitCode -in 0, 3010, 1605)
+    }
+    $exe = $Command
+    $args = ''
+    if ($Command -match '^"([^"]+)"\s*(.*)$') { $exe = $Matches[1]; $args = [string]$Matches[2] }
+    elseif ($Command -match '^(\S+)\s*(.*)$') { $exe = $Matches[1]; $args = [string]$Matches[2] }
+    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    $low = "$args".ToLowerInvariant()
+    if ($low -notmatch '/s\b|/silent|/quiet|/qn|/norestart') {
+      $args = (($args + ' /S /silent /quiet /norestart').Trim())
+    }
+    $p = Start-Process -FilePath $exe -ArgumentList $args -Wait -PassThru -WindowStyle Hidden
+    return ($null -eq $p.ExitCode -or $p.ExitCode -in 0, 1, 3010)
+  } catch { return $false }
+}
+function Invoke-ClearApps {
+  Write-Host 'Clearing installed apps...'
+  Write-Log 'Clearing installed apps'
+  $protect = @(
+    'Realtek*','Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*',
+    'Microsoft .NET*','Microsoft Edge*','Microsoft Edge WebView2*','Microsoft Update*',
+    'Windows PC Health Check*','Update for *','Security Update*','Hotfix*',
+    'Intel*','NVIDIA*','AMD*','Chipset*','Canon *','Printer*','Driver*',
+    'Google Chrome*','Grok Bot*','Windows Terminal*','Windows SDK*','Microsoft OneDrive*'
+  )
+  $paths = @(
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+  )
   $changed = $false
   foreach ($prog in @(Get-ItemProperty $paths -ErrorAction SilentlyContinue)) {
     $dn = [string](Get-Prop $prog 'DisplayName'); if (-not $dn) { continue }
     $sc = Get-Prop $prog 'SystemComponent'
     if ($null -ne $sc) { try { if ([int]$sc -eq 1) { continue } } catch {} }
     if (Test-NameLike $dn $protect) { continue }
-    $u = [string](Get-Prop $prog 'QuietUninstallString'); if (-not $u) { $u = [string](Get-Prop $prog 'UninstallString') }
+    $u = [string](Get-Prop $prog 'QuietUninstallString')
+    if (-not $u) { $u = [string](Get-Prop $prog 'UninstallString') }
     if (-not $u) { continue }
-    try {
-      if ($u -match '\{([0-9A-Fa-f-]{36})\}') {
-        $p = Start-Process msiexec.exe -ArgumentList "/X{$($Matches[1])}", '/qn', '/norestart' -Wait -PassThru
-        if ($p.ExitCode -in 0, 3010) { $changed = $true }
-      }
-    } catch {}
+    Write-Host "Uninstall $dn"
+    Write-Log "Uninstall $dn"
+    if (Invoke-UninstallCommand $u) { $changed = $true }
   }
+  $keepAppx = @('Microsoft.WindowsStore','Microsoft.StorePurchaseApp','Microsoft.WindowsCalculator','Microsoft.Windows.Photos','Microsoft.WindowsTerminal','MicrosoftWindows.Client*','Microsoft.Windows.*','Microsoft.UI.*','Microsoft.VCLibs*','Microsoft.Services.Store*','windows.immersivecontrolpanel','Microsoft.DesktopAppInstaller','Microsoft.SecHealthUI','Microsoft.Paint','Microsoft.ScreenSketch','Microsoft.WindowsNotepad')
+  try {
+    foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
+      $n = [string]$pkg.Name
+      if (-not $n) { continue }
+      if ($pkg.IsFramework) { continue }
+      if ($pkg.NonRemovable) { continue }
+      if (Test-NameLike $n $keepAppx) { continue }
+      if ($n -like 'Microsoft.Windows.*' -or $n -like 'Windows.*') { continue }
+      Write-Host "Remove Store app $($pkg.Name)"
+      Write-Log "Remove Store app $($pkg.Name)"
+      try {
+        Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+        $changed = $true
+      } catch {
+        try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $changed = $true } catch {}
+      }
+    }
+  } catch {}
   return $changed
 }
-$didWipe = $false
-$wantReset = $true
-if (-not $SkipWipe -and ($Apply -or $UninstallNotKept -or $Restart -or $RestartIfNeeded)) {
-  $wantReset = Confirm-ResetIfAppsMissing
+$doWipe = -not $SkipWipe
+$doRestart = $Restart -or $Apply -or $UninstallNotKept -or $RestartIfNeeded
+if ($doWipe -or $doRestart) {
+  if (-not (Confirm-ResetIfAppsMissing)) {
+    Write-Log 'Reset skipped: Grok Bot and/or Chrome still missing, user said No.'
+    Write-Host "Reset skipped. Log: $log"
+    return
+  }
 }
-if (-not $wantReset) {
-  Write-Log 'Reset skipped: Grok Bot and/or Chrome still missing, user said No.'
-  Write-Host "Reset skipped. Log: $log"
-  return
+if ($doWipe) {
+  Invoke-ClearApps | Out-Null
+  Write-Log 'App clear finished'
 }
-if (-not $SkipWipe -and ($Apply -or $UninstallNotKept)) { $didWipe = Invoke-LightWipe }
 Write-Host "Log: $log"
-if ($Restart -or ($RestartIfNeeded -and $didWipe)) { shutdown.exe /r /t 60 /c 'Admin-Setup finished.' }
+if ($doRestart) {
+  Write-Host 'Restarting in 60 seconds. Cancel with: shutdown /a'
+  Write-Log 'Restart scheduled'
+  shutdown.exe /r /t 60 /c 'Admin-Setup finished. Apps cleared.'
+}
