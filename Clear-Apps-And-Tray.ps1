@@ -10,7 +10,7 @@
   Protects drivers, runtimes, Edge/WebView2, and non-removable system
   packages so the machine can still boot. Does not install anything.
   Does not keep Chrome, Grok Bot, or other third-party apps.
-  Does not restart the computer.
+  Does not restart the computer or Explorer.
 
   Windows UAC still appears if this process is not elevated.
 
@@ -118,7 +118,6 @@ function Invoke-UninstallCommand([string]$Command) {
 }
 
 function Invoke-ClearWin32Apps {
-  # Only keep what the OS and hardware need. Everything else goes.
   $protect = @(
     'Realtek*',
     'Microsoft Visual C++*',
@@ -285,12 +284,6 @@ function Set-EmptySystemTray {
     }
   }
   try { Remove-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband' -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-
-  try {
-    Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  } catch {}
-  Start-Sleep -Seconds 1
-  try { Start-Process explorer.exe | Out-Null } catch {}
 }
 
 $win32 = 0
