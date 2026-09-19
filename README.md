@@ -1,6 +1,8 @@
 # Admin Setup
 
 One file. Order: other drives, then C: (not Windows), then Recycle Bin.
+After the wipe finishes, a Yes/No box offers the **Developers Preference** package.
+Yes installs latest Chrome, Grok, and Snipping Tool.
 
 ```powershell
 $dst = "$env:USERPROFILE\admin\Admin-Setup.ps1"
