@@ -1,88 +1,42 @@
 <#
 .SYNOPSIS
-  Three circular badges: folder, PowerShell, rerun wipe script.
+  HD circular launch badges (WPF): folder, PowerShell, wipe script.
 #>
 [CmdletBinding()]
 param()
 Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
 
 $mutex = New-Object System.Threading.Mutex($false, 'Local\AdminSetupFolderLogo')
 if (-not $mutex.WaitOne(0, $false)) { return }
 
-$size = 60
-$gap = 18
-$pad = 3
-$count = 3
-$magenta = [System.Drawing.Color]::FromArgb(255, 0, 255)
+Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing, System.Windows.Forms
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'Launch'
-$form.FormBorderStyle = 'None'
-$form.StartPosition = 'Manual'
-$form.ShowInTaskbar = $false
-$form.TopMost = $true
-$form.Size = New-Object System.Drawing.Size((($size * $count) + ($gap * ($count - 1)) + ($pad * 2)), ($size + ($pad * 2)))
-$form.BackColor = $magenta
-$form.TransparencyKey = $magenta
-$form.AllowTransparency = $true
-
-function Get-BadgeX([int]$Index) { return $pad + ($Index * ($size + $gap)) }
-
-$gp = New-Object System.Drawing.Drawing2D.GraphicsPath
-0..($count - 1) | ForEach-Object { $gp.AddEllipse((Get-BadgeX $_), $pad, $size, $size) }
-$form.Region = New-Object System.Drawing.Region($gp)
-
-function Move-ToBottom {
-  $s = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-  $form.Location = New-Object System.Drawing.Point([int](($s.Width - $form.Width) / 2), ($s.Bottom - $form.Height - 14))
-}
-Move-ToBottom
-
-function Get-AppIcon([string]$Exe) {
-  try {
-    $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Exe)
-    if ($ico) { return $ico.ToBitmap() }
-  } catch {}
-  return $null
-}
-
-function New-SweepIcon {
-  $bmp = New-Object System.Drawing.Bitmap 48, 48
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $g.Clear([System.Drawing.Color]::Transparent)
-  $green = [System.Drawing.Color]::FromArgb(80, 220, 140)
-  $pen = New-Object System.Drawing.Pen($green, 3.5)
-  $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-  $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-  $g.DrawArc($pen, 8, 8, 32, 32, 40, 200)
-  $g.DrawArc($pen, 8, 8, 32, 32, 220, 100)
-  $brush = New-Object System.Drawing.SolidBrush($green)
-  $pts1 = @(
-    (New-Object System.Drawing.Point 34, 8),
-    (New-Object System.Drawing.Point 42, 18),
-    (New-Object System.Drawing.Point 28, 16)
-  )
-  $g.FillPolygon($brush, $pts1)
-  $pts2 = @(
-    (New-Object System.Drawing.Point 14, 40),
-    (New-Object System.Drawing.Point 6, 30),
-    (New-Object System.Drawing.Point 18, 32)
-  )
-  $g.FillPolygon($brush, $pts2)
-  $g.FillEllipse($brush, 21, 21, 6, 6)
-  $pen.Dispose()
-  $brush.Dispose()
-  $g.Dispose()
+function Convert-ToBitmapSource([System.Drawing.Image]$Img) {
+  if (-not $Img) { return $null }
+  $ms = New-Object System.IO.MemoryStream
+  $Img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+  $ms.Position = 0
+  $bmp = New-Object System.Windows.Media.Imaging.BitmapImage
+  $bmp.BeginInit()
+  $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+  $bmp.StreamSource = $ms
+  $bmp.EndInit()
+  $bmp.Freeze()
+  $ms.Dispose()
   return $bmp
 }
 
-$folderIcon = Get-AppIcon (Join-Path $env:SystemRoot 'explorer.exe')
-$psIcon = Get-AppIcon (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
-$scriptIcon = New-SweepIcon
+function Get-ExeImage([string]$Path) {
+  try {
+    $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path)
+    if (-not $ico) { return $null }
+    return Convert-ToBitmapSource $ico.ToBitmap()
+  } catch { return $null }
+}
+
+$folderImg = Get-ExeImage (Join-Path $env:SystemRoot 'explorer.exe')
+$psImg = Get-ExeImage (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
 
 $scriptPath = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
 if (-not (Test-Path -LiteralPath $scriptPath)) {
@@ -90,60 +44,77 @@ if (-not (Test-Path -LiteralPath $scriptPath)) {
   if (Test-Path -LiteralPath $alt) { $scriptPath = $alt }
 }
 
-function Draw-Badge($g, [int]$x, [int]$y, $fill, $ring, $img) {
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
-  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-  $brush = New-Object System.Drawing.SolidBrush($fill)
-  $g.FillEllipse($brush, $x, $y, $size, $size)
-  $brush.Dispose()
-  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $pen = New-Object System.Drawing.Pen($ring, 2.5)
-  $g.DrawEllipse($pen, ($x + 3), ($y + 3), ($size - 7), ($size - 7))
-  $pen.Dispose()
-  if ($img) {
-    $iw = 28
-    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $g.DrawImage($img, ($x + [int](($size - $iw) / 2)), ($y + [int](($size - $iw) / 2)), $iw, $iw)
-  }
+$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Launch" WindowStyle="None" AllowsTransparency="True"
+        Background="Transparent" ShowInTaskbar="False" Topmost="True"
+        ResizeMode="NoResize" SizeToContent="WidthAndHeight"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+  <Window.Resources>
+    <Style TargetType="Ellipse" x:Key="Ring">
+      <Setter Property="Width" Value="64"/>
+      <Setter Property="Height" Value="64"/>
+      <Setter Property="StrokeThickness" Value="2.2"/>
+    </Style>
+  </Window.Resources>
+  <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
+    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder">
+      <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" Style="{StaticResource Ring}"/>
+      <Image Name="ImgFolder" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
+    </Grid>
+    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnPs">
+      <Ellipse Fill="#FF172233" Stroke="#FF3B9AE1" Style="{StaticResource Ring}"/>
+      <Image Name="ImgPs" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
+    </Grid>
+    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript">
+      <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" Style="{StaticResource Ring}"/>
+      <Viewbox Width="30" Height="30">
+        <Canvas Width="48" Height="48">
+          <Path Stroke="#FF3DDC84" StrokeThickness="3.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                Data="M 10,18 A 14,14 0 1 1 16,36" Fill="Transparent"/>
+          <Path Fill="#FF3DDC84" Data="M 8,12 L 18,18 L 8,22 Z"/>
+          <Path Stroke="#FF3DDC84" StrokeThickness="3.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                Data="M 38,30 A 14,14 0 1 1 32,12" Fill="Transparent"/>
+          <Path Fill="#FF3DDC84" Data="M 40,36 L 30,30 L 40,26 Z"/>
+        </Canvas>
+      </Viewbox>
+    </Grid>
+  </StackPanel>
+</Window>
+'@
+
+$window = [Windows.Markup.XamlReader]::Parse($xaml)
+$window.FindName('ImgFolder').Source = $folderImg
+$window.FindName('ImgPs').Source = $psImg
+
+function Move-ToBottom {
+  $wa = [System.Windows.SystemParameters]::WorkArea
+  if ($wa.Height -lt 100) { $wa = [System.Windows.SystemParameters]::PrimaryScreenHeight; $sw = [System.Windows.SystemParameters]::PrimaryScreenWidth }
+  $sw = [System.Windows.SystemParameters]::PrimaryScreenWidth
+  $sh = [System.Windows.SystemParameters]::PrimaryScreenHeight
+  $window.Left = [Math]::Max(0, ($sw - $window.ActualWidth) / 2)
+  $window.Top = $sh - $window.ActualHeight - 16
 }
 
-$form.add_Paint({
-  param($sender, $e)
-  $e.Graphics.Clear($magenta)
-  Draw-Badge $e.Graphics (Get-BadgeX 0) $pad ([System.Drawing.Color]::FromArgb(40, 40, 40)) ([System.Drawing.Color]::FromArgb(255, 196, 37)) $folderIcon
-  Draw-Badge $e.Graphics (Get-BadgeX 1) $pad ([System.Drawing.Color]::FromArgb(24, 34, 50)) ([System.Drawing.Color]::FromArgb(55, 148, 230)) $psIcon
-  Draw-Badge $e.Graphics (Get-BadgeX 2) $pad ([System.Drawing.Color]::FromArgb(22, 44, 30)) ([System.Drawing.Color]::FromArgb(80, 220, 140)) $scriptIcon
+$window.FindName('BtnFolder').Add_MouseLeftButtonUp({
+  Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList @("`"$env:USERPROFILE`"") | Out-Null
 })
-
-function Test-InCircle([int]$px, [int]$py, [int]$cx, [int]$cy) {
-  $dx = $px - ($cx + ($size / 2.0))
-  $dy = $py - ($cy + ($size / 2.0))
-  return (($dx * $dx) + ($dy * $dy)) -le [Math]::Pow(($size / 2.0), 2)
-}
-
-function Run-AdminScript {
+$window.FindName('BtnPs').Add_MouseLeftButtonUp({
+  Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null
+})
+$window.FindName('BtnScript').Add_MouseLeftButtonUp({
   if (-not (Test-Path -LiteralPath $scriptPath)) { return }
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   Start-Process -FilePath $ps -Verb RunAs -ArgumentList @(
     '-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"",'-ShowReport'
   ) | Out-Null
-}
-
-$form.add_MouseDown({
-  param($sender, $e)
-  if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
-  if (Test-InCircle $e.X $e.Y (Get-BadgeX 0) $pad) {
-    Start-Process "$env:SystemRoot\explorer.exe" $env:USERPROFILE | Out-Null; return
-  }
-  if (Test-InCircle $e.X $e.Y (Get-BadgeX 1) $pad) {
-    Start-Process (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null; return
-  }
-  if (Test-InCircle $e.X $e.Y (Get-BadgeX 2) $pad) { Run-AdminScript }
 })
 
-$form.add_Shown({ Move-ToBottom; $form.Invalidate() })
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 3000
-$timer.add_Tick({ if (-not $form.IsDisposed) { Move-ToBottom; $form.TopMost = $true } })
+$window.Add_ContentRendered({ Move-ToBottom })
+$timer = New-Object System.Windows.Threading.DispatcherTimer
+$timer.Interval = [TimeSpan]::FromSeconds(3)
+$timer.Add_Tick({ $window.Topmost = $true; Move-ToBottom })
 $timer.Start()
-[void][System.Windows.Forms.Application]::Run($form)
+
+[void]$window.ShowDialog()
