@@ -1,6 +1,6 @@
 # Admin Setup
 
-One script.
+One script. Everything lives in `Admin-Setup.ps1`.
 
 ```powershell
 $dst = "$env:USERPROFILE\admin\Admin-Setup.ps1"
@@ -12,11 +12,18 @@ powershell -STA -NoProfile -ExecutionPolicy Bypass -File $dst
 
 Modes:
 
-- (default) wipe removable apps, hide taskbar, badges, report, clean caches
-- `-Mode HideBar`
-- `-Mode Badges`
-- `-Mode WipeDisk -ConfirmPhrase WIPE-ALL-DATA`
-- `-Mode Uninstall`
-- `-Mode CleanCaches`
+| Mode | What it does |
+|---|---|
+| (default / All) | Remove removable Win32 + Store apps, clean caches, hide taskbar, badges, report |
+| HideBar | Keep the taskbar hidden |
+| Badges | Three logos. Trash = delete file, re-download, run default |
+| WipeDisk | Clear Downloads/user folders and format other drives. Needs `-ConfirmPhrase WIPE-ALL-DATA` |
+| CleanCaches | Temp, INetCache, Recycle Bin |
+| Repair | **New.** Flush DNS, rebuild icon cache, restart Explorer, re-download script, restart badges |
+| Uninstall | Stop helpers, restore taskbar, delete Admin Setup files |
 
-Trash badge = delete this file, download it again, run default mode.
+```powershell
+powershell -STA -NoProfile -ExecutionPolicy Bypass -File $dst -Mode Repair
+powershell -NoProfile -ExecutionPolicy Bypass -File $dst -Mode WipeDisk -ConfirmPhrase WIPE-ALL-DATA
+powershell -NoProfile -ExecutionPolicy Bypass -File $dst -Mode Uninstall
+```
