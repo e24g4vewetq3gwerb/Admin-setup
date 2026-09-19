@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Remove removable apps, hide the taskbar, show three badges. Opens a report window when done.
+  Remove removable apps, hide the taskbar, show three badges. Trash reruns the disk wipe.
 #>
 [CmdletBinding()]
 param(
@@ -82,9 +82,7 @@ if ($Mode -eq 'Badges') {
   function Get-ExeImage([string]$Path) {
     try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path); if ($ico) { return Convert-ToBitmapSource $ico.ToBitmap() } } catch { return $null }
   }
-  $script:RunScript = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
-  $found = Get-SelfPath
-  if ($found) { $script:RunScript = $found }
+  $script:WipeFile = Join-Path $env:USERPROFILE 'admin\Wipe-All-Except-Windows.ps1'
   $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Launch" WindowStyle="None" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize" SizeToContent="WidthAndHeight">
   <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
@@ -118,16 +116,21 @@ if ($Mode -eq 'Badges') {
   $window.FindName('BtnFolder').Add_MouseLeftButtonUp({ Start-Process explorer.exe $env:USERPROFILE | Out-Null })
   $window.FindName('BtnPs').Add_MouseLeftButtonUp({ Start-Process (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null })
   $window.FindName('BtnScript').Add_MouseLeftButtonUp({
-    $answer = [System.Windows.MessageBox]::Show("Run Clear Apps and Tray again? Same as restarting the script.`n`nContinue?", 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
+    $answer = [System.Windows.MessageBox]::Show("Clear Downloads, user folders, Program Files, and all other drives?`nWindows folder is kept.`n`nContinue?", 'Confirm disk wipe', 'YesNo', 'Exclamation', 'No')
     if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
-    $target = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
-    if (-not (Test-Path -LiteralPath $target)) { $target = $script:RunScript }
-    if (-not $target -or -not (Test-Path -LiteralPath $target)) {
-      [System.Windows.MessageBox]::Show("Script not found.`n$target", 'Admin Setup') | Out-Null
+    $target = Join-Path $env:USERPROFILE 'admin\Wipe-All-Except-Windows.ps1'
+    if (-not (Test-Path -LiteralPath $target)) {
+      try {
+        New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Wipe-All-Except-Windows.ps1' -OutFile $target
+      } catch {}
+    }
+    if (-not (Test-Path -LiteralPath $target)) {
+      [System.Windows.MessageBox]::Show("Missing`n$target", 'Admin Setup') | Out-Null
       return
     }
     $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    Start-Process -FilePath $ps -Verb RunAs -ArgumentList @('-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$target`"") | Out-Null
+    Start-Process -FilePath $ps -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$target`"",'-ConfirmPhrase','WIPE-ALL-DATA') | Out-Null
   })
   $window.Add_ContentRendered({ Move-ToBottom })
   $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -149,7 +152,7 @@ function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
-Write-Log 'Clear-Apps-And-Tray 20260919 trash relaunch'
+Write-Log 'Clear-Apps-And-Tray 20260919 trash disk wipe'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -222,6 +225,8 @@ function Set-NoTaskbar {
   if (-not $self) { return }
   $dest = Join-Path $homeRoot 'Clear-Apps-And-Tray.ps1'
   if ([IO.Path]::GetFullPath($self) -ne [IO.Path]::GetFullPath($dest)) { Copy-Item -LiteralPath $self -Destination $dest -Force }
+  $wipe = Join-Path $homeRoot 'Wipe-All-Except-Windows.ps1'
+  try { Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Wipe-All-Except-Windows.ps1' -OutFile $wipe } catch {}
   $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
   New-Item -Path $runKey -Force | Out-Null
   $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
