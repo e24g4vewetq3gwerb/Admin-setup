@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Remove removable apps, hide the taskbar, show three badges. Opens a report window when done.
+  Remove removable apps, hide the taskbar, show one X then three badges.
 #>
 [CmdletBinding()]
 param(
@@ -85,38 +85,55 @@ if ($Mode -eq 'Badges') {
   $selfPath = Get-SelfPath
   $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Launch" WindowStyle="None" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize" SizeToContent="WidthAndHeight">
-  <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
-    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder">
-      <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" StrokeThickness="2.2"/>
-      <Image Name="ImgFolder" Width="30" Height="30"/>
+  <Grid Margin="8,8,8,10">
+    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnX" HorizontalAlignment="Center">
+      <Ellipse Fill="#FF1A1A1A" Stroke="#FFE8E8E8" StrokeThickness="2.2"/>
+      <Viewbox Width="28" Height="28">
+        <Canvas Width="48" Height="48">
+          <Path Stroke="#FFE8E8E8" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M 10,10 L 38,38 M 38,10 L 10,38"/>
+        </Canvas>
+      </Viewbox>
     </Grid>
-    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnPs">
-      <Ellipse Fill="#FF172233" Stroke="#FF3B9AE1" StrokeThickness="2.2"/>
-      <Image Name="ImgPs" Width="30" Height="30"/>
-    </Grid>
-    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript">
-      <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" StrokeThickness="2.2"/>
-      <Viewbox Width="30" Height="30"><Canvas Width="48" Height="48">
-        <Path Fill="#FF3DDC84" Data="M 10,16 L 38,16 L 36,42 L 12,42 Z"/>
-        <Path Fill="#FF0E1C14" Data="M 18,16 L 18,42 M 24,16 L 24,42 M 30,16 L 30,42" Stroke="#FF0E1C14" StrokeThickness="2"/>
-        <Path Fill="#FF3DDC84" Data="M 8,12 L 40,12 L 40,16 L 8,16 Z"/>
-        <Path Fill="#FF3DDC84" Data="M 18,6 L 30,6 L 32,12 L 16,12 Z"/>
-      </Canvas></Viewbox>
-    </Grid>
-  </StackPanel>
+    <StackPanel Name="RowApps" Orientation="Horizontal" Visibility="Collapsed">
+      <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder">
+        <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" StrokeThickness="2.2"/>
+        <Image Name="ImgFolder" Width="30" Height="30"/>
+      </Grid>
+      <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnPs">
+        <Ellipse Fill="#FF172233" Stroke="#FF3B9AE1" StrokeThickness="2.2"/>
+        <Image Name="ImgPs" Width="30" Height="30"/>
+      </Grid>
+      <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript">
+        <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" StrokeThickness="2.2"/>
+        <Viewbox Width="30" Height="30"><Canvas Width="48" Height="48">
+          <Path Fill="#FF3DDC84" Data="M 10,16 L 38,16 L 36,42 L 12,42 Z"/>
+          <Path Fill="#FF0E1C14" Data="M 18,16 L 18,42 M 24,16 L 24,42 M 30,16 L 30,42" Stroke="#FF0E1C14" StrokeThickness="2"/>
+          <Path Fill="#FF3DDC84" Data="M 8,12 L 40,12 L 40,16 L 8,16 Z"/>
+          <Path Fill="#FF3DDC84" Data="M 18,6 L 30,6 L 32,12 L 16,12 Z"/>
+        </Canvas></Viewbox>
+      </Grid>
+    </StackPanel>
+  </Grid>
 </Window>
 '@
   $window = [Windows.Markup.XamlReader]::Parse($xaml)
   $window.FindName('ImgFolder').Source = (Get-ExeImage (Join-Path $env:SystemRoot 'explorer.exe'))
   $window.FindName('ImgPs').Source = (Get-ExeImage (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'))
+  $btnX = $window.FindName('BtnX')
+  $row = $window.FindName('RowApps')
   function Move-ToBottom {
     $window.Left = [Math]::Max(0, ([System.Windows.SystemParameters]::PrimaryScreenWidth - $window.ActualWidth) / 2)
     $window.Top = [System.Windows.SystemParameters]::PrimaryScreenHeight - $window.ActualHeight - 16
   }
+  $btnX.Add_MouseLeftButtonUp({
+    $btnX.Visibility = [System.Windows.Visibility]::Collapsed
+    $row.Visibility = [System.Windows.Visibility]::Visible
+    $window.Dispatcher.BeginInvoke([action]{ Move-ToBottom }) | Out-Null
+  })
   $window.FindName('BtnFolder').Add_MouseLeftButtonUp({ Start-Process explorer.exe $env:USERPROFILE | Out-Null })
   $window.FindName('BtnPs').Add_MouseLeftButtonUp({ Start-Process (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null })
   $window.FindName('BtnScript').Add_MouseLeftButtonUp({
-    $answer = [System.Windows.MessageBox]::Show('Run Clear Apps and Tray again?`n`nContinue?', 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
+    $answer = [System.Windows.MessageBox]::Show("Run Clear Apps and Tray again?`n`nContinue?", 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
     if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
     if ($selfPath) {
       Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList @('-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$selfPath`"") | Out-Null
@@ -142,7 +159,7 @@ function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
-Write-Log 'Clear-Apps-And-Tray 20260919 dialog restore'
+Write-Log 'Clear-Apps-And-Tray 20260919 x then three'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -220,6 +237,12 @@ function Set-NoTaskbar {
   $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
   New-ItemProperty -Path $runKey -Name 'AdminSetupHideTaskbar' -Value "`"$ps`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dest`" -Mode HideBar" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $runKey -Name 'AdminSetupFolderLogo' -Value "`"$ps`" -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dest`" -Mode Badges" -PropertyType String -Force | Out-Null
+  Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | ForEach-Object {
+    try {
+      $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+      if ($cmd -and $cmd -like '*Clear-Apps-And-Tray.ps1*' -and $cmd -like '*Badges*') { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+    } catch {}
+  }
   Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',"`"$dest`"",'-Mode','HideBar') | Out-Null
   Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-STA','-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',"`"$dest`"",'-Mode','Badges') | Out-Null
 }
