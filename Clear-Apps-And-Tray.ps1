@@ -1,10 +1,6 @@
 <#
 .SYNOPSIS
   Clear removable apps. Taskbar shows only Start and PowerShell.
-
-.DESCRIPTION
-  Uninstalls removable Win32 and Store apps, hides tray and extra
-  taskbar chrome, pins Windows PowerShell. Does not start explorer.exe.
 #>
 [CmdletBinding()]
 param(
@@ -60,8 +56,8 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919d — Start + PowerShell only'
-Write-Log 'Clear-Apps-And-Tray 20260919d — Start + PowerShell only'
+Write-Host 'Clear-Apps-And-Tray 20260919e — Start + PowerShell layout'
+Write-Log 'Clear-Apps-And-Tray 20260919e — Start + PowerShell layout'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -119,29 +115,11 @@ function Invoke-UninstallCommand([string]$Command) {
 
 function Invoke-ClearWin32Apps {
   $protect = @(
-    'Realtek*',
-    'Microsoft Visual C++*',
-    'Microsoft Visual Studio* Redistributable*',
-    'Microsoft .NET*',
-    'Microsoft Edge*',
-    'Microsoft Edge WebView2*',
-    'Microsoft Update*',
-    'Windows PC Health Check*',
-    'Update for *',
-    'Security Update*',
-    'Hotfix*',
-    'Intel*',
-    'NVIDIA*',
-    'AMD*',
-    'Chipset*',
-    'Canon *',
-    'HP *',
-    'Printer*',
-    'Driver*',
-    'Windows Terminal*',
-    'Windows SDK*',
-    'Microsoft Windows*',
-    'Windows Malicious Software Removal*'
+    'Realtek*','Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*',
+    'Microsoft .NET*','Microsoft Edge*','Microsoft Edge WebView2*','Microsoft Update*',
+    'Windows PC Health Check*','Update for *','Security Update*','Hotfix*',
+    'Intel*','NVIDIA*','AMD*','Chipset*','Canon *','HP *','Printer*','Driver*',
+    'Windows Terminal*','Windows SDK*','Microsoft Windows*','Windows Malicious Software Removal*'
   )
   $paths = @(
     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -156,10 +134,7 @@ function Invoke-ClearWin32Apps {
     if ($null -ne $systemComponent) {
       try { if ([int]$systemComponent -eq 1) { continue } } catch {}
     }
-    if (Test-NameLike $name $protect) {
-      Write-Log "Keep Win32: $name"
-      continue
-    }
+    if (Test-NameLike $name $protect) { Write-Log "Keep Win32: $name"; continue }
     $uninstall = [string](Get-Prop $prog 'QuietUninstallString')
     if (-not $uninstall) { $uninstall = [string](Get-Prop $prog 'UninstallString') }
     if (-not $uninstall) { continue }
@@ -172,26 +147,12 @@ function Invoke-ClearWin32Apps {
 
 function Invoke-ClearStoreApps {
   $keepAppx = @(
-    'Microsoft.WindowsStore',
-    'Microsoft.StorePurchaseApp',
-    'Microsoft.WindowsTerminal',
-    'MicrosoftWindows.Client*',
-    'Microsoft.Windows.*',
-    'Microsoft.UI.*',
-    'Microsoft.VCLibs*',
-    'Microsoft.Services.Store*',
-    'windows.immersivecontrolpanel',
-    'Microsoft.DesktopAppInstaller',
-    'Microsoft.SecHealthUI',
-    'Microsoft.MicrosoftEdge*',
-    'Microsoft.ECApp',
-    'Microsoft.LockApp',
-    'Microsoft.AAD.BrokerPlugin',
-    'Microsoft.AccountsControl',
-    'Microsoft.BioEnrollment',
-    'Microsoft.CredDialogHost',
-    'Microsoft.Win32WebViewHost',
-    'Microsoft.XboxGameCallableUI',
+    'Microsoft.WindowsStore','Microsoft.StorePurchaseApp','Microsoft.WindowsTerminal',
+    'MicrosoftWindows.Client*','Microsoft.Windows.*','Microsoft.UI.*','Microsoft.VCLibs*',
+    'Microsoft.Services.Store*','windows.immersivecontrolpanel','Microsoft.DesktopAppInstaller',
+    'Microsoft.SecHealthUI','Microsoft.MicrosoftEdge*','Microsoft.ECApp','Microsoft.LockApp',
+    'Microsoft.AAD.BrokerPlugin','Microsoft.AccountsControl','Microsoft.BioEnrollment',
+    'Microsoft.CredDialogHost','Microsoft.Win32WebViewHost','Microsoft.XboxGameCallableUI',
     'Microsoft.PPIProjection'
   )
   $removed = 0
@@ -209,10 +170,7 @@ function Invoke-ClearStoreApps {
         Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
         $removed++
       } catch {
-        try {
-          Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue
-          $removed++
-        } catch {
+        try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $removed++ } catch {
           Write-Log "Store remove failed: $name $($_.Exception.Message)"
         }
       }
@@ -223,33 +181,76 @@ function Invoke-ClearStoreApps {
   return $removed
 }
 
-function Set-PowerShellTaskbarPin {
-  $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
-  New-Item -ItemType Directory -Force -Path $pinDir | Out-Null
-  Get-ChildItem -LiteralPath $pinDir -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($_.Name -notmatch '(?i)powershell') {
-      try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
-    }
+function Get-PowerShellStartLnk {
+  $candidates = @(
+    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell\Windows PowerShell.lnk'),
+    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell\Windows PowerShell.lnk'),
+    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\System Tools\Windows PowerShell.lnk'),
+    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\System Tools\Windows PowerShell.lnk')
+  )
+  foreach ($p in $candidates) {
+    if (Test-Path -LiteralPath $p) { return $p }
   }
+  $dir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $lnk = Join-Path $dir 'Windows PowerShell.lnk'
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $lnk = Join-Path $pinDir 'Windows PowerShell.lnk'
-  try {
-    $w = New-Object -ComObject WScript.Shell
-    $s = $w.CreateShortcut($lnk)
-    $s.TargetPath = $ps
-    $s.WorkingDirectory = (Join-Path $env:SystemRoot 'System32')
-    $s.WindowStyle = 1
-    $s.Description = 'Windows PowerShell'
-    $s.IconLocation = "$ps,0"
-    $s.Save()
-    Write-Log "Pinned PowerShell shortcut: $lnk"
-  } catch {
-    Write-Log "PowerShell pin failed: $($_.Exception.Message)"
+  $w = New-Object -ComObject WScript.Shell
+  $s = $w.CreateShortcut($lnk)
+  $s.TargetPath = $ps
+  $s.WorkingDirectory = (Join-Path $env:SystemRoot 'System32')
+  $s.IconLocation = "$ps,0"
+  $s.Save()
+  return $lnk
+}
+
+function Set-TaskbarLayoutXml {
+  $lnk = Get-PowerShellStartLnk
+  $lnkAttr = $lnk -replace '&','&amp;' -replace '"','&quot;'
+  $xml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<LayoutModificationTemplate xmlns="http://schemas.microsoft.com/Start/2014/LayoutModification" xmlns:defaultlayout="http://schemas.microsoft.com/Start/2014/FullDefaultLayout" xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout" xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout" Version="1">
+  <CustomTaskbarLayoutCollection PinListPlacement="Replace">
+    <defaultlayout:TaskbarLayout>
+      <taskbar:TaskbarPinList>
+        <taskbar:DesktopApp DesktopApplicationLinkPath="$lnkAttr"/>
+      </taskbar:TaskbarPinList>
+    </defaultlayout:TaskbarLayout>
+  </CustomTaskbarLayoutCollection>
+</LayoutModificationTemplate>
+"@
+  $shellDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Shell'
+  New-Item -ItemType Directory -Force -Path $shellDir | Out-Null
+  $xmlPath = Join-Path $shellDir 'LayoutModification.xml'
+  [System.IO.File]::WriteAllText($xmlPath, $xml, [Text.UTF8Encoding]::new($false))
+  Write-Log "Wrote $xmlPath"
+
+  $pol = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
+  New-Item -Path $pol -Force | Out-Null
+  New-ItemProperty -Path $pol -Name 'StartLayoutFile' -Value $xmlPath -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $pol -Name 'LockedStartLayout' -Value 0 -PropertyType DWord -Force | Out-Null
+
+  $polLm = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
+  New-Item -Path $polLm -Force | Out-Null
+  New-ItemProperty -Path $polLm -Name 'StartLayoutFile' -Value $xmlPath -PropertyType String -Force | Out-Null
+}
+
+function Restart-ShellNoFolderWindow {
+  Write-Log 'Refreshing shell: stop explorer only (do not start explorer.exe)'
+  try { Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+  $deadline = (Get-Date).AddSeconds(10)
+  while (-not (Get-Process explorer -ErrorAction SilentlyContinue)) {
+    if ((Get-Date) -gt $deadline) {
+      Write-Log 'Explorer did not auto-return; starting shell with /NOUACCHECK'
+      Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList '/NOUACCHECK' | Out-Null
+      break
+    }
+    Start-Sleep -Milliseconds 300
   }
 }
 
 function Set-MinimalTaskbar {
-  Write-Host 'Taskbar: Start + PowerShell only (no Explorer restart)...'
+  Write-Host 'Applying Start + PowerShell taskbar...'
   Write-Log 'Set-MinimalTaskbar'
 
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
@@ -280,9 +281,7 @@ function Set-MinimalTaskbar {
     ShowTaskbarChat      = 0
     SearchboxTaskbarMode = 0
     ShowCortanaButton    = 0
-    ShowStatusBar        = 0
     EnableAutoTray       = 1
-    TaskbarSizeMove      = 0
   }
   foreach ($k in $advVals.Keys) {
     try { New-ItemProperty -Path $adv -Name $k -Value $advVals[$k] -PropertyType DWord -Force | Out-Null } catch {}
@@ -291,11 +290,6 @@ function Set-MinimalTaskbar {
   $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
   New-Item -Path $search -Force | Out-Null
   try { New-ItemProperty -Path $search -Name 'SearchboxTaskbarMode' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
-
-  $fe = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
-  New-Item -Path $fe -Force | Out-Null
-  try { New-ItemProperty -Path $fe -Name 'HideRecommendedPersonalizedSites' -Value 1 -PropertyType DWord -Force | Out-Null } catch {}
-  try { New-ItemProperty -Path $fe -Name 'DisableSearchBoxSuggestions' -Value 1 -PropertyType DWord -Force | Out-Null } catch {}
 
   $notify = 'HKCU:\Control Panel\NotifyIconSettings'
   if (Test-Path $notify) {
@@ -313,7 +307,8 @@ function Set-MinimalTaskbar {
   try { New-ItemProperty -Path $lang -Name 'ShowStatus' -Value 3 -PropertyType DWord -Force | Out-Null } catch {}
   try { New-ItemProperty -Path $lang -Name 'ExtraIconsOnMinimized' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
 
-  Set-PowerShellTaskbarPin
+  Set-TaskbarLayoutXml
+  Restart-ShellNoFolderWindow
 }
 
 $win32 = 0
@@ -334,5 +329,5 @@ if ($SkipTray) {
 
 Write-Log "Finished. Win32 attempts=$win32 Store attempts=$store"
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
-Write-Host 'Taskbar target: Start + Windows PowerShell only. Sign out/in if the pin is not visible yet.'
+Write-Host 'Taskbar target: Start + Windows PowerShell. Taskbar icons apply after the shell refresh.'
 Write-Host "Log: $log"
