@@ -1,6 +1,6 @@
-﻿<#
+<#!
 .SYNOPSIS
-  Minimal taskbar: Start button + up-arrow chevron only (default); optional Chrome/Cursor/Grok dock.
+  Minimal taskbar: Start button + up-arrow chevron only (default); optional Chrome+Grok or Chrome/Cursor/Grok dock.
 
 .DESCRIPTION
   Goal: Start button + up-arrow Show Hidden Icons chevron only (no pinned apps by default).
@@ -10,6 +10,7 @@
   - Demotes overflow NotifyIconSettings (IsPromoted=0); keeps the chevron
   - Does NOT set NoTrayItemsDisplay (that would hide the chevron)
   - -StartOnly (default on -Apply unless -DockChromeCursorGrok): remove ALL TaskBar .lnk pins
+  - -DockChromeGrok: pin Chrome + Grok Bot and center-align
   - -DockChromeCursorGrok: pin Chrome, Cursor, Grok Bot and center-align (legacy dock)
   - On -Apply: runs Restore-TrayArrowOnly.ps1 unless -SkipWindhawkTray
     so language / Wi-Fi / volume / battery / Show Desktop are hidden via Windhawk
@@ -30,6 +31,7 @@ param(
   [switch]$Apply,
   [switch]$StartOnly,
   [switch]$DockChromeCursorGrok,
+  [switch]$DockChromeGrok,
   [switch]$IncludeWindhawkTray,
   [switch]$SkipWindhawkTray
 )
@@ -38,11 +40,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 if (-not $Audit -and -not $Apply) { $Audit = $true }
 
-# StartOnly is the default Apply profile unless DockChromeCursorGrok is set
-if ($Apply -and -not $DockChromeCursorGrok -and -not $PSBoundParameters.ContainsKey('StartOnly')) {
+# StartOnly is the default Apply profile unless a dock mode is set
+if ($Apply -and -not $DockChromeCursorGrok -and -not $DockChromeGrok -and -not $PSBoundParameters.ContainsKey('StartOnly')) {
   $StartOnly = $true
 }
-if ($DockChromeCursorGrok) { $StartOnly = $false }
+if ($DockChromeCursorGrok -or $DockChromeGrok) { $StartOnly = $false }
 if ($Apply -and -not $SkipWindhawkTray) { $IncludeWindhawkTray = $true }
 if ($SkipWindhawkTray) { $IncludeWindhawkTray = $false }
 
@@ -83,7 +85,7 @@ function Set-RegDword([string]$Path, [string]$Name, [int]$Value, [string]$Label)
   }
 }
 
-L "==== Minimal-Taskbar Audit=$Audit Apply=$Apply StartOnly=$StartOnly DockChromeCursorGrok=$DockChromeCursorGrok IncludeWindhawkTray=$IncludeWindhawkTray ===="
+L "==== Minimal-Taskbar Audit=$Audit Apply=$Apply StartOnly=$StartOnly DockChromeCursorGrok=$DockChromeCursorGrok DockChromeGrok=$DockChromeGrok IncludeWindhawkTray=$IncludeWindhawkTray ===="
 L 'Goal: Start button + up-arrow chevron only'
 Write-Host 'Goal: Start button + up-arrow chevron only'
 
@@ -98,8 +100,8 @@ Set-RegDword $adv 'ShowTaskViewButton' 0 'Task View button'
 Set-RegDword $adv 'TaskbarMn' 0 'Chat button'
 Set-RegDword $adv 'ShowCopilotButton' 0 'Copilot button'
 # StartOnly: left align (0) so Start/Windows logo is the only left icon; dock mode: center (1)
-$alignWant = if ($StartOnly -or (-not $DockChromeCursorGrok -and $Audit)) { 0 } else { 1 }
-if ($DockChromeCursorGrok) { $alignWant = 1 }
+$alignWant = if ($StartOnly -or (-not $DockChromeCursorGrok -and -not $DockChromeGrok -and $Audit)) { 0 } else { 1 }
+if ($DockChromeCursorGrok -or $DockChromeGrok) { $alignWant = 1 }
 $alignLabel = if ($alignWant -eq 0) { 'Taskbar left align (Start only)' } else { 'Taskbar center align' }
 Set-RegDword $adv 'TaskbarAl' $alignWant $alignLabel
 Set-RegDword $search 'SearchboxTaskbarMode' 0 'Search box hidden'
@@ -181,11 +183,33 @@ if (Test-Path $nis) {
 
 
 $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
-$dockNames = @('Google Chrome.lnk', 'Cursor.lnk', 'Grok Bot.lnk')
+if ($DockChromeGrok -and -not $DockChromeCursorGrok) {
+  $dockNames = @('Google Chrome.lnk', 'Grok Bot.lnk')
+} else {
+  $dockNames = @('Google Chrome.lnk', 'Cursor.lnk', 'Grok Bot.lnk')
+}
 $sources = @{
   'Google Chrome.lnk' = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Google Chrome.lnk"
   'Cursor.lnk'        = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Cursor.lnk"
   'Grok Bot.lnk'      = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Grok Bot.lnk"
+}
+# Extra Grok shortcut locations
+$grokAlts = @(
+  "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Grok Bot.lnk",
+  "$env:LOCALAPPDATA\Programs\Grok Bot\Grok Bot.exe"
+)
+if (-not (Test-Path $sources['Grok Bot.lnk'])) {
+  foreach ($g in $grokAlts) {
+    if (Test-Path $g) {
+      if ($g -like '*.exe') {
+        # create temp lnk via WScript if only exe exists — pin path handled below
+        $sources['Grok Bot.lnk'] = $g
+      } else {
+        $sources['Grok Bot.lnk'] = $g
+      }
+      break
+    }
+  }
 }
 
 if ($Audit) {
@@ -196,16 +220,17 @@ if ($Audit) {
   }
   $extra = @($allPins)
   $missingDocks = @()
-  if ($DockChromeCursorGrok) {
+  $dockMode = ($DockChromeCursorGrok -or $DockChromeGrok)
+  if ($dockMode) {
     $extra = @($allPins | Where-Object { $dockNames -notcontains $_ })
     $missingDocks = @($dockNames | Where-Object { -not (Test-Path (Join-Path $pinDir $_)) })
   }
   $startOnlyMet = ($allPins.Count -eq 0)
-  Add-R 'TaskBar pin folder' $(if ($DockChromeCursorGrok) {
+  Add-R 'TaskBar pin folder' $(if ($dockMode) {
       if ($extra.Count -eq 0 -and $missingDocks.Count -eq 0) { 'OK' } else { 'NEED' }
     } else {
       if ($startOnlyMet) { 'OK' } else { 'NEED' }
-    }) $(if ($DockChromeCursorGrok) {
+    }) $(if ($dockMode) {
       "extra=$($extra -join ';') missing=$($missingDocks -join ';')"
     } else {
       "StartOnly goal (0 pins): pins=$($allPins.Count) list=$($allPins -join ';')"
@@ -231,9 +256,21 @@ if ($Audit) {
     }
     foreach ($name in $dockNames) {
       $src = $sources[$name]
-      if (Test-Path $src) {
-        Copy-Item $src (Join-Path $pinDir $name) -Force
-        Add-R "Pin shortcut $name" 'FIXED' 'copied'
+      $destPin = Join-Path $pinDir $name
+      if ($src -and (Test-Path $src)) {
+        if ($src -like '*.lnk') {
+          Copy-Item $src $destPin -Force
+          Add-R "Pin shortcut $name" 'FIXED' 'copied'
+        } elseif ($src -like '*.exe') {
+          $w = New-Object -ComObject WScript.Shell
+          $sc = $w.CreateShortcut($destPin)
+          $sc.TargetPath = $src
+          $sc.WorkingDirectory = (Split-Path $src)
+          $sc.Save()
+          Add-R "Pin shortcut $name" 'FIXED' "created from exe $src"
+        } else {
+          Add-R "Pin shortcut $name" 'NEED' "unsupported source: $src"
+        }
       } else {
         Add-R "Pin shortcut $name" 'NEED' "source missing: $src"
       }

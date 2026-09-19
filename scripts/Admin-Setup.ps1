@@ -1,34 +1,29 @@
-﻿<#
+<#!
 .SYNOPSIS
-  One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar (Start + up-arrow).
+  One-shot wipe + harden: remove apps, restart, then offer latest Grok Bot + Chrome (install + pin).
 
 .DESCRIPTION
-  Entry point for the admin package. Runs in order:
-    1) Harden-ITAdminPC.ps1
-    2) Cleanup-Background.ps1
-    3) Unpin-And-Remove-OEM.ps1 (also invoked from Cleanup on -Apply)
-    4) Minimal-Taskbar.ps1 (default Start + up-arrow only; optional -DockChromeCursorGrok)
-    5) On -Restart/-RestartIfNeeded: register Offer-GrokBot.ps1 (ask to download if missing at next logon)
+  Entry point for the admin package. Intended flow:
+    1) Harden-ITAdminPC.ps1 (optional)
+    2) Cleanup-Background.ps1 -KeepProfile DriversOnly -UninstallNotKept (wipe removable apps)
+    3) Unpin-And-Remove-OEM.ps1
+    4) Clear-Desktop.ps1 (black wallpaper, no desktop icons incl Recycle Bin)
+    5) Minimal-Taskbar.ps1 -StartOnly (clear pins for reboot)
+    6) On -Restart/-RestartIfNeeded: register Offer-GrokAndChrome.ps1 RunOnce
+       After reboot: ask Yes/No for latest Grok Bot + Google Chrome; on Yes install both and pin.
 
   -Audit              Report only (default)
   -Apply              Apply harden + cleanup service/startup changes
-  -UninstallNotKept   Uninstall apps outside Minimal keep list
+  -UninstallNotKept   Wipe apps outside DriversOnly keep/protect list
   -Restart            Reboot when finished
-  -RestartIfNeeded    Reboot only if child scripts reported changes / taskbar+cleanup Apply ran
-  -SkipHarden         Skip harden step
-  -SkipCleanup        Skip cleanup step
-  -SkipUnpin          Skip dedicated Edge/Outlook/Store step
-  -SkipTaskbar        Skip minimal taskbar step
-  -SkipWindhawkTray   Skip Windhawk up-arrow-only tray inside Minimal-Taskbar
-  -DockChromeCursorGrok  Pass through: pin Chrome/Cursor/Grok (legacy dock) instead of StartOnly
-  -StartOnly          Pass through to Minimal-Taskbar (default on Apply/Uninstall)
+  -RestartIfNeeded    Reboot only if Apply/uninstall ran
+  -SkipHarden / -SkipCleanup / -SkipUnpin / -SkipTaskbar
+  -SkipWindhawkTray   Skip Windhawk during wipe pass
+  -DockChromeCursorGrok  Legacy 3-app dock (usually leave off; offer script pins Chrome+Grok after reboot)
+  -StartOnly          Clear pins during wipe (default)
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Audit
-.EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Apply -UninstallNotKept -RestartIfNeeded
-.EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Apply -DockChromeCursorGrok
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -43,7 +38,9 @@ param(
   [switch]$SkipTaskbar,
   [switch]$SkipWindhawkTray,
   [switch]$DockChromeCursorGrok,
-  [switch]$StartOnly
+  [switch]$StartOnly,
+  [ValidateSet('Minimal','DriversOnly')]
+  [string]$KeepProfile = 'DriversOnly'
 )
 
 Set-StrictMode -Version Latest
@@ -63,7 +60,7 @@ function Test-IsAdmin {
   return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-L "==== Admin-Setup Audit=$Audit Apply=$Apply UninstallNotKept=$UninstallNotKept DockChromeCursorGrok=$DockChromeCursorGrok StartOnly=$StartOnly elevated=$(Test-IsAdmin) ===="
+L "==== Admin-Setup Audit=$Audit Apply=$Apply UninstallNotKept=$UninstallNotKept KeepProfile=$KeepProfile elevated=$(Test-IsAdmin) ===="
 
 if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
   L 'Re-launching elevated...'
@@ -79,6 +76,7 @@ if (($Apply -or $UninstallNotKept) -and -not (Test-IsAdmin)) {
   if ($SkipWindhawkTray) { $args += '-SkipWindhawkTray' }
   if ($DockChromeCursorGrok) { $args += '-DockChromeCursorGrok' }
   if ($StartOnly) { $args += '-StartOnly' }
+  $args += @('-KeepProfile', $KeepProfile)
   if ($WhatIfPreference) { $args += '-WhatIf' }
   Start-Process powershell.exe -Verb RunAs -ArgumentList $args | Out-Null
   return
@@ -88,7 +86,8 @@ $harden = Join-Path $here 'Harden-ITAdminPC.ps1'
 $cleanup = Join-Path $here 'Cleanup-Background.ps1'
 $unpin = Join-Path $here 'Unpin-And-Remove-OEM.ps1'
 $taskbar = Join-Path $here 'Minimal-Taskbar.ps1'
-$offerGrok = Join-Path $here 'Offer-GrokBot.ps1'
+$offer = Join-Path $here 'Offer-GrokAndChrome.ps1'
+if (-not (Test-Path $offer)) { $offer = Join-Path $here 'Offer-GrokBot.ps1' }
 
 $script:TaskbarOrCleanupApplied = $false
 
@@ -108,7 +107,7 @@ if (-not $SkipHarden) {
 }
 
 if (-not $SkipCleanup) {
-  $cArgs = @()
+  $cArgs = @('-KeepProfile', $KeepProfile)
   if ($Apply) { $cArgs += '-Apply'; $script:TaskbarOrCleanupApplied = $true }
   if ($UninstallNotKept) { $cArgs += '-UninstallNotKept'; $script:TaskbarOrCleanupApplied = $true }
   if (-not $Apply -and -not $UninstallNotKept) { $cArgs += '-Audit' }
@@ -117,6 +116,12 @@ if (-not $SkipCleanup) {
 
 if (-not $SkipUnpin -and ($Apply -or $UninstallNotKept)) {
   Invoke-Step -Path $unpin -ArgList @() -Label 'Unpin-And-Remove-OEM'
+}
+
+$clearDesk = Join-Path $here 'Clear-Desktop.ps1'
+if (($Apply -or $UninstallNotKept) -and (Test-Path $clearDesk)) {
+  Invoke-Step -Path $clearDesk -ArgList @('-Apply') -Label 'Clear-Desktop'
+  $script:TaskbarOrCleanupApplied = $true
 }
 
 if (-not $SkipTaskbar -and ($Apply -or $UninstallNotKept -or $Audit)) {
@@ -131,7 +136,7 @@ if (-not $SkipTaskbar -and ($Apply -or $UninstallNotKept -or $Audit)) {
   if ($DockChromeCursorGrok) {
     $tArgs += '-DockChromeCursorGrok'
   } else {
-    # Default: Start + up-arrow only
+    # Wipe pass: Start only; post-reboot offer pins Chrome+Grok if user says Yes
     $tArgs += '-StartOnly'
   }
   Invoke-Step -Path $taskbar -ArgList $tArgs -Label 'Minimal-Taskbar'
@@ -141,28 +146,26 @@ L '==== Admin-Setup finished ===='
 Write-Host ''
 Write-Host 'Admin-Setup finished. See CSVs/logs under this scripts folder.'
 Write-Host "Log: $log"
-Write-Host 'Default taskbar goal: Start button + up-arrow chevron only'
+Write-Host 'Flow: wipe apps -> restart -> offer latest Grok Bot + Chrome -> install + pin if Yes'
 
-
-# After restart: ask to download Grok Bot if missing
-if (($Restart -or $RestartIfNeeded) -and ($Apply -or $UninstallNotKept) -and (Test-Path $offerGrok)) {
-  L 'Register Offer-GrokBot RunOnce for next logon'
-  Invoke-Step -Path $offerGrok -ArgList @('-RegisterRunOnce') -Label 'Offer-GrokBot-Register'
+# After restart: offer Grok + Chrome
+if (($Restart -or $RestartIfNeeded) -and ($Apply -or $UninstallNotKept) -and (Test-Path $offer)) {
+  L 'Register Offer-GrokAndChrome RunOnce for next logon'
+  Invoke-Step -Path $offer -ArgList @('-RegisterRunOnce') -Label 'Offer-GrokAndChrome-Register'
 }
 
-# Restart policy: -Restart always; -RestartIfNeeded when Apply path ran taskbar/cleanup
 $alreadyScheduled = $false
 if ($Restart) {
   L 'Restart requested - 60s'
-  shutdown.exe /r /t 60 /c 'Admin-Setup: restart to finish applying changes'
+  shutdown.exe /r /t 60 /c 'Admin-Setup: restart to finish wipe; then offer Grok Bot + Chrome'
   $alreadyScheduled = $true
 } elseif ($RestartIfNeeded -and $script:TaskbarOrCleanupApplied -and ($Apply -or $UninstallNotKept)) {
-  L 'RestartIfNeeded: scheduling shutdown /r /t 60 after Apply taskbar/cleanup'
-  Write-Host 'Restarting in 60 seconds to finish applying changes. Run: shutdown /a   to cancel.'
-  shutdown.exe /r /t 60 /c 'Admin-Setup: restart to finish applying changes'
+  L 'RestartIfNeeded: scheduling shutdown /r /t 60'
+  Write-Host 'Restarting in 60 seconds. Run: shutdown /a   to cancel.'
+  shutdown.exe /r /t 60 /c 'Admin-Setup: restart to finish wipe; then offer Grok Bot + Chrome'
   $alreadyScheduled = $true
 } elseif ($RestartIfNeeded) {
-  L 'RestartIfNeeded set but no Apply taskbar/cleanup ran — skip reboot (child may have scheduled separately)'
+  L 'RestartIfNeeded set but no Apply taskbar/cleanup ran — skip reboot'
 }
 
 if ($alreadyScheduled) {

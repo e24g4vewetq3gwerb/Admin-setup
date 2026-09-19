@@ -1,11 +1,12 @@
-﻿<#
+<#!
 .SYNOPSIS
   Cleanup background junk and uninstall programs not on the keep list.
 
 .DESCRIPTION
-  Keep profile (default Minimal): Google Chrome, Grok / Grok Bot, Windows Terminal for uninstall.
-  Also protects drivers/runtimes required for a usable PC (audio, VC++ redistributables,
-  Canon printer drivers). Everything else in the uninstall list is a removal candidate.
+  Keep profile default Minimal: Chrome, Grok, Terminal.
+  DriversOnly (Admin-Setup default): wipe user apps; protect drivers/runtimes only.
+  Also disables Remote Desktop Connection client when Apply/Uninstall runs elevated.
+  Reports Settings-style installed-app count (Win32 + visible AppX).
   Reports Settings-style installed-app count (Win32 + visible AppX).
   Startup folders/Run keys are cleared bare on Apply (no special Chrome/Grok keep); SecurityHealth protected.
 
@@ -30,7 +31,7 @@ param(
   [switch]$Restart,
   [switch]$RestartIfNeeded,
   [ValidateSet('Minimal','DriversOnly')]
-  [string]$KeepProfile = 'Minimal',
+  [string]$KeepProfile = 'DriversOnly',
   [string]$LogPath = "$env:USERPROFILE\admin\scripts\Cleanup-Background.log"
 )
 
@@ -212,10 +213,8 @@ $keepPatterns = @(
   'Terminal*'
 )
 if ($KeepProfile -eq 'DriversOnly') {
-  # No user apps kept — drivers/runtimes only via $protectPatterns (+ Windhawk for tray)
-  $keepPatterns = @(
-    'Windhawk*'
-  )
+  # No user apps kept — drivers/runtimes only via $protectPatterns
+  $keepPatterns = @()
 }
 
 # Required for a usable machine (not "apps", but don't strip)
@@ -465,7 +464,7 @@ foreach ($dir in @([Environment]::GetFolderPath('Startup'), "$env:ProgramData\Mi
 }
 
 # --- Scheduled tasks ---
-foreach ($tp in @('\\Razer\\*','\\Adobe*\\*','\\Google\\*','\\Microsoft\\EdgeUpdate\\*','\\Canon*\\*')) {
+foreach ($tp in @('\\Razer\*','\\Adobe*\*','\\Google\*','\\Microsoft\EdgeUpdate\*','\\Canon*\*')) {
   try { $tasks = @(Get-ScheduledTask -TaskPath $tp -ErrorAction SilentlyContinue | Where-Object { $_.State -ne 'Disabled' }) }
   catch { $tasks = @() }
   foreach ($t in $tasks) {
@@ -558,19 +557,35 @@ if (-not $Apply -and -not $UninstallNotKept -and -not $UninstallJunk) {
   Write-Host "To apply: -Apply -UninstallNotKept [-RestartIfNeeded|-Restart]"
 }
 
+# --- Optional: remove Remote Desktop Connection client ---
+if (($Apply -or $UninstallNotKept) -and -not $Audit) {
+  try {
+    $feat = Get-WindowsOptionalFeature -Online -FeatureName 'Microsoft-RemoteDesktopConnection' -ErrorAction SilentlyContinue
+    if ($feat -and $feat.State -eq 'Enabled') {
+      Disable-WindowsOptionalFeature -Online -FeatureName 'Microsoft-RemoteDesktopConnection' -NoRestart -ErrorAction Stop | Out-Null
+      Write-Log 'Disabled Microsoft-RemoteDesktopConnection'
+      $script:ChangesMade = $true
+    }
+  } catch {
+    Write-Log ("Remote Desktop disable: " + $_.Exception.Message) 'WARN'
+  }
+}
+
 # --- Restart policy ---
 $shouldRestart = $false
 if ($Restart) { $shouldRestart = $true }
 elseif ($RestartIfNeeded -and $script:ChangesMade) { $shouldRestart = $true }
 
-$offerGrok = Join-Path (Split-Path $LogPath) 'Offer-GrokBot.ps1'
-if ($shouldRestart -and (Test-Path $offerGrok)) {
+$offerDir = Split-Path $LogPath
+$offer = Join-Path $offerDir 'Offer-GrokAndChrome.ps1'
+if (-not (Test-Path $offer)) { $offer = Join-Path $offerDir 'Offer-GrokBot.ps1' }
+if ($shouldRestart -and (Test-Path $offer)) {
   try {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $offerGrok -RegisterRunOnce
-    Write-Log 'Registered Offer-GrokBot RunOnce for next logon'
-    Write-Host 'Next logon will ask to download Grok Bot if it is missing.'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $offer -RegisterRunOnce
+    Write-Log 'Registered Offer-GrokAndChrome RunOnce for next logon'
+    Write-Host 'Next logon will offer latest Grok Bot + Google Chrome (install + pin).'
   } catch {
-    Write-Log ("Offer-GrokBot register failed: " + $_.Exception.Message) 'WARN'
+    Write-Log ("Offer-GrokAndChrome register failed: " + $_.Exception.Message) 'WARN'
   }
 }
 
