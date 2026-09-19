@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Admin Setup. Icon on Explorer desktop + Start menu, then optional installs.
+  Admin Setup. One desktop icon only, then optional Grok/Chrome install.
 #>
 [CmdletBinding()]
 param(
@@ -55,13 +55,37 @@ if (-not (Test-Path -LiteralPath $persist) -and $self -and (Test-Path $self)) {
   Copy-Item -LiteralPath $self -Destination $persist -Force
 }
 function Get-ExplorerDesktop {
-  try { return (New-Object -ComObject Shell.Application).NameSpace(0x10).Self.Path } catch { return $null }
+  try { return (New-Object -ComObject Shell.Application).NameSpace(0x10).Self.Path } catch {}
+  return [Environment]::GetFolderPath('Desktop')
 }
-function New-AdminLnk([string]$Folder) {
-  if (-not $Folder) { return $null }
-  if (-not (Test-Path -LiteralPath $Folder)) { New-Item -ItemType Directory -Force -Path $Folder | Out-Null }
+function Remove-ExtraAdminIcons {
+  $keepDesk = Get-ExplorerDesktop
+  $keepLnk = Join-Path $keepDesk 'Admin Setup.lnk'
+  $extra = @(
+    (Join-Path $env:USERPROFILE 'Desktop\Admin Setup.lnk'),
+    (Join-Path $env:USERPROFILE 'Desktop\Admin Setup.cmd'),
+    (Join-Path $env:USERPROFILE 'OneDrive\Desktop\Admin Setup.lnk'),
+    (Join-Path $env:USERPROFILE 'OneDrive\Desktop\Admin Setup.cmd'),
+    (Join-Path $env:PUBLIC 'Desktop\Admin Setup.lnk'),
+    (Join-Path $env:PUBLIC 'Desktop\Admin Setup.cmd'),
+    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'),
+    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Admin Setup.cmd'),
+    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Admin Setup.lnk'),
+    (Join-Path $homeRoot 'Admin Setup.cmd')
+  )
+  foreach ($p in $extra) {
+    if (-not $p) { continue }
+    if ($keepLnk -and (([string]$p).ToLower() -eq ([string]$keepLnk).ToLower())) { continue }
+    if (Test-Path -LiteralPath $p) {
+      try { Remove-Item -LiteralPath $p -Force -ErrorAction Stop; Write-Log "Removed extra $p" } catch {}
+    }
+  }
+}
+function Install-DesktopIcon {
+  Remove-ExtraAdminIcons
+  $desk = Get-ExplorerDesktop
+  $lnkPath = Join-Path $desk 'Admin Setup.lnk'
   $w = New-Object -ComObject WScript.Shell
-  $lnkPath = Join-Path $Folder 'Admin Setup.lnk'
   $sc = $w.CreateShortcut($lnkPath)
   $sc.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
   $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$persist`" -Apply -UninstallNotKept -RestartIfNeeded"
@@ -70,38 +94,10 @@ function New-AdminLnk([string]$Folder) {
   $sc.Description = 'Admin Setup'
   $sc.IconLocation = "$env:SystemRoot\System32\imageres.dll,109"
   $sc.Save()
+  Write-Host "Desktop icon: $lnkPath"
   return $lnkPath
 }
-function Install-DesktopIcon {
-  $made = @()
-  $desk = Get-ExplorerDesktop
-  if (-not $desk) { $desk = [Environment]::GetFolderPath('Desktop') }
-  $start = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-  foreach ($folder in @($desk, $start)) {
-    try {
-      $p = New-AdminLnk $folder
-      if ($p) { $made += $p }
-    } catch { Write-Log "Icon failed in $folder : $($_.Exception.Message)" }
-  }
-  try {
-    $sa = New-Object -ComObject Shell.Application
-    $folder = $sa.NameSpace($start)
-    $item = $folder.ParseName('Admin Setup.lnk')
-    if ($item) {
-      foreach ($verb in @('Pin to Start','Pin to Tas&kbar','Pin to taskbar')) {
-        $v = $item.Verbs() | Where-Object { $_.Name -replace '&','' -eq ($verb -replace '&','') }
-        if ($v) { $v.DoIt() }
-      }
-    }
-  } catch { Write-Log "Pin verb failed: $($_.Exception.Message)" }
-  return $made
-}
-if (-not $SkipDesktopIcon) {
-  $icons = Install-DesktopIcon
-  Write-Host 'Admin Setup icons:'
-  $icons | ForEach-Object { Write-Host "  $_" }
-  Write-Host "Explorer desktop: $(Get-ExplorerDesktop)"
-}
+if (-not $SkipDesktopIcon) { Install-DesktopIcon | Out-Null }
 if ($IconOnly) { exit 0 }
 if (-not (Test-IsAdmin)) {
   $arg = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$persist`"", '-SkipDesktopIcon')
