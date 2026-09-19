@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  HD circular launch badges (WPF): folder, PowerShell, wipe script.
+  HD circular launch badges: folder, PowerShell, wipe (with confirm).
 #>
 [CmdletBinding()]
 param()
@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Continue'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\AdminSetupFolderLogo')
 if (-not $mutex.WaitOne(0, $false)) { return }
 
-Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing, System.Windows.Forms
+Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase, System.Drawing
 
 function Convert-ToBitmapSource([System.Drawing.Image]$Img) {
   if (-not $Img) { return $null }
@@ -26,7 +26,6 @@ function Convert-ToBitmapSource([System.Drawing.Image]$Img) {
   $ms.Dispose()
   return $bmp
 }
-
 function Get-ExeImage([string]$Path) {
   try {
     $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path)
@@ -37,7 +36,6 @@ function Get-ExeImage([string]$Path) {
 
 $folderImg = Get-ExeImage (Join-Path $env:SystemRoot 'explorer.exe')
 $psImg = Get-ExeImage (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
-
 $scriptPath = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
 if (-not (Test-Path -LiteralPath $scriptPath)) {
   $alt = Join-Path (Split-Path -Parent $PSCommandPath) 'Clear-Apps-And-Tray.ps1'
@@ -51,32 +49,23 @@ $xaml = @'
         Background="Transparent" ShowInTaskbar="False" Topmost="True"
         ResizeMode="NoResize" SizeToContent="WidthAndHeight"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
-  <Window.Resources>
-    <Style TargetType="Ellipse" x:Key="Ring">
-      <Setter Property="Width" Value="64"/>
-      <Setter Property="Height" Value="64"/>
-      <Setter Property="StrokeThickness" Value="2.2"/>
-    </Style>
-  </Window.Resources>
   <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
-    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder">
-      <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" Style="{StaticResource Ring}"/>
+    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder" ToolTip="Open your folder">
+      <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" StrokeThickness="2.2"/>
       <Image Name="ImgFolder" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
     </Grid>
-    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnPs">
-      <Ellipse Fill="#FF172233" Stroke="#FF3B9AE1" Style="{StaticResource Ring}"/>
+    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnPs" ToolTip="Open PowerShell">
+      <Ellipse Fill="#FF172233" Stroke="#FF3B9AE1" StrokeThickness="2.2"/>
       <Image Name="ImgPs" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
     </Grid>
-    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript">
-      <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" Style="{StaticResource Ring}"/>
+    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript" ToolTip="Clear apps (asks first)">
+      <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" StrokeThickness="2.2"/>
       <Viewbox Width="30" Height="30">
         <Canvas Width="48" Height="48">
-          <Path Stroke="#FF3DDC84" StrokeThickness="3.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                Data="M 10,18 A 14,14 0 1 1 16,36" Fill="Transparent"/>
-          <Path Fill="#FF3DDC84" Data="M 8,12 L 18,18 L 8,22 Z"/>
-          <Path Stroke="#FF3DDC84" StrokeThickness="3.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                Data="M 38,30 A 14,14 0 1 1 32,12" Fill="Transparent"/>
-          <Path Fill="#FF3DDC84" Data="M 40,36 L 30,30 L 40,26 Z"/>
+          <Path Fill="#FF3DDC84" Data="M 10,16 L 38,16 L 36,42 L 12,42 Z"/>
+          <Path Fill="#FF0E1C14" Data="M 18,16 L 18,42 M 24,16 L 24,42 M 30,16 L 30,42" Stroke="#FF0E1C14" StrokeThickness="2"/>
+          <Path Fill="#FF3DDC84" Data="M 8,12 L 40,12 L 40,16 L 8,16 Z"/>
+          <Path Fill="#FF3DDC84" Data="M 18,6 L 30,6 L 32,12 L 16,12 Z"/>
         </Canvas>
       </Viewbox>
     </Grid>
@@ -89,12 +78,24 @@ $window.FindName('ImgFolder').Source = $folderImg
 $window.FindName('ImgPs').Source = $psImg
 
 function Move-ToBottom {
-  $wa = [System.Windows.SystemParameters]::WorkArea
-  if ($wa.Height -lt 100) { $wa = [System.Windows.SystemParameters]::PrimaryScreenHeight; $sw = [System.Windows.SystemParameters]::PrimaryScreenWidth }
   $sw = [System.Windows.SystemParameters]::PrimaryScreenWidth
   $sh = [System.Windows.SystemParameters]::PrimaryScreenHeight
   $window.Left = [Math]::Max(0, ($sw - $window.ActualWidth) / 2)
   $window.Top = $sh - $window.ActualHeight - 16
+}
+
+function Confirm-AndRun {
+  if (-not (Test-Path -LiteralPath $scriptPath)) {
+    [System.Windows.MessageBox]::Show("Script not found:`n$scriptPath", 'Admin Setup', 'OK', 'Warning') | Out-Null
+    return
+  }
+  $msg = "Run Clear Apps and Tray again?`n`nThis will uninstall removable programs and keep the taskbar hidden.`nA report opens when it finishes.`n`nContinue?"
+  $answer = [System.Windows.MessageBox]::Show($msg, 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
+  if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Start-Process -FilePath $ps -Verb RunAs -ArgumentList @(
+    '-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"",'-ShowReport'
+  ) | Out-Null
 }
 
 $window.FindName('BtnFolder').Add_MouseLeftButtonUp({
@@ -103,18 +104,11 @@ $window.FindName('BtnFolder').Add_MouseLeftButtonUp({
 $window.FindName('BtnPs').Add_MouseLeftButtonUp({
   Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null
 })
-$window.FindName('BtnScript').Add_MouseLeftButtonUp({
-  if (-not (Test-Path -LiteralPath $scriptPath)) { return }
-  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  Start-Process -FilePath $ps -Verb RunAs -ArgumentList @(
-    '-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$scriptPath`"",'-ShowReport'
-  ) | Out-Null
-})
+$window.FindName('BtnScript').Add_MouseLeftButtonUp({ Confirm-AndRun })
 
 $window.Add_ContentRendered({ Move-ToBottom })
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(3)
 $timer.Add_Tick({ $window.Topmost = $true; Move-ToBottom })
 $timer.Start()
-
 [void]$window.ShowDialog()
