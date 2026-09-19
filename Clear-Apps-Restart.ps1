@@ -12,6 +12,9 @@
   so the machine can still boot. Everything else with an uninstall string or a
   removable AppX package is removed quietly.
 
+  Microsoft.DesktopAppInstaller is NonRemovable (0x80070032). Microsoft.Winget.Source
+  and Microsoft.ScreenSketch are treated as removable leftovers.
+
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-Restart.ps1
 #>
@@ -184,7 +187,6 @@ function Invoke-ClearStoreApps {
     'Microsoft.DesktopAppInstaller',
     'Microsoft.SecHealthUI',
     'Microsoft.Paint',
-    'Microsoft.ScreenSketch',
     'Microsoft.WindowsNotepad',
     'Microsoft.WindowsAlarms',
     'Microsoft.WindowsSoundRecorder',
