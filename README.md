@@ -63,6 +63,7 @@ Optional: Restore-TrayArrowOnly.ps1 (re-apply up-arrow-only tray)
 | 3 | **Unpin-And-Remove-OEM.ps1** | Unpin Edge / Outlook / Store; remove OEM AppX |
 | 4 | **Minimal-Taskbar.ps1** | Default **StartOnly**: clear all pins, left-align Start; hide widgets/search/task view; Windhawk up-arrow-only tray |
 | * | **Restore-TrayArrowOnly.ps1** | Standalone: Windhawk `taskbar-tray-system-icon-tweaks` → tray shows only up-arrow |
+| * | **Offer-GrokBot.ps1** | After restart/logon: if Grok Bot missing, ask Yes/No and download installer from cursor.com |
 | * | **Complete-Need.ps1** | Optional: NetBIOS, SMB/RPC blocks, BitLocker attempt, Secure Boot notes |
 
 ---
@@ -127,3 +128,15 @@ Optional: Restore-TrayArrowOnly.ps1 (re-apply up-arrow-only tray)
 ## Portfolio note
 
 Documents a practical **endpoint hardening + minimal desktop** workflow for an IT-admin style workstation, including a Windhawk-based Win11 system-tray cleanup and a Start-only taskbar profile.
+
+
+### Post-restart Grok Bot offer
+
+When `Admin-Setup.ps1` or `Cleanup-Background.ps1` schedules a reboot (`-Restart` / `-RestartIfNeeded`), it registers a one-time **RunOnce** that runs `Offer-GrokBot.ps1` at next logon:
+
+1. If Grok Bot is already installed → quiet exit.
+2. If missing → MessageBox: download now?
+3. On Yes → download Windows Setup from [cursor.com/download/bot](https://cursor.com/download/bot) and run it.
+
+Manual: `powershell -ExecutionPolicy Bypass -File .\scripts\Offer-GrokBot.ps1`
+Register only: `... Offer-GrokBot.ps1 -RegisterRunOnce`

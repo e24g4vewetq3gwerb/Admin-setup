@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Minimal taskbar: Start button + up-arrow chevron only (default); optional Chrome/Cursor/Grok dock.
 

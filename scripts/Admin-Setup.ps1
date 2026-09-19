@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   One-shot IT admin PC setup: harden + cleanup + OEM unpin + minimal taskbar (Start + up-arrow).
 
@@ -8,6 +8,7 @@
     2) Cleanup-Background.ps1
     3) Unpin-And-Remove-OEM.ps1 (also invoked from Cleanup on -Apply)
     4) Minimal-Taskbar.ps1 (default Start + up-arrow only; optional -DockChromeCursorGrok)
+    5) On -Restart/-RestartIfNeeded: register Offer-GrokBot.ps1 (ask to download if missing at next logon)
 
   -Audit              Report only (default)
   -Apply              Apply harden + cleanup service/startup changes
@@ -87,6 +88,7 @@ $harden = Join-Path $here 'Harden-ITAdminPC.ps1'
 $cleanup = Join-Path $here 'Cleanup-Background.ps1'
 $unpin = Join-Path $here 'Unpin-And-Remove-OEM.ps1'
 $taskbar = Join-Path $here 'Minimal-Taskbar.ps1'
+$offerGrok = Join-Path $here 'Offer-GrokBot.ps1'
 
 $script:TaskbarOrCleanupApplied = $false
 
@@ -140,6 +142,13 @@ Write-Host ''
 Write-Host 'Admin-Setup finished. See CSVs/logs under this scripts folder.'
 Write-Host "Log: $log"
 Write-Host 'Default taskbar goal: Start button + up-arrow chevron only'
+
+
+# After restart: ask to download Grok Bot if missing
+if (($Restart -or $RestartIfNeeded) -and ($Apply -or $UninstallNotKept) -and (Test-Path $offerGrok)) {
+  L 'Register Offer-GrokBot RunOnce for next logon'
+  Invoke-Step -Path $offerGrok -ArgList @('-RegisterRunOnce') -Label 'Offer-GrokBot-Register'
+}
 
 # Restart policy: -Restart always; -RestartIfNeeded when Apply path ran taskbar/cleanup
 $alreadyScheduled = $false
