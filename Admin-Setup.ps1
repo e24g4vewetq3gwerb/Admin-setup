@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
   Wipe other drives, then C: (keep Windows), delete all C:\Users folders, Recycle last.
+  After wipe, offer Developers Preference package (latest Chrome, Grok, Snipping Tool).
   -ConfirmPhrase WIPE-ALL-DATA   -Mode Wipe to skip badges
 #>
 [CmdletBinding()]
@@ -130,6 +131,59 @@ function Start-Badges {
   $w.Add_ContentRendered({ $w.Left = ([System.Windows.SystemParameters]::PrimaryScreenWidth - $w.ActualWidth)/2; $w.Top = [System.Windows.SystemParameters]::PrimaryScreenHeight - $w.ActualHeight - 16 })
   [void]$w.ShowDialog()
 }
+function Try-Winget([string]$Id) {
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if (-not $winget) { return $false }
+  L "WINGET $Id"
+  & winget install -e --id $Id --accept-package-agreements --accept-source-agreements --disable-interactivity
+  return ($LASTEXITCODE -eq 0)
+}
+function Install-LatestChrome {
+  if (Try-Winget 'Google.Chrome') { L 'CHROME winget ok'; return }
+  $ProgressPreference = 'SilentlyContinue'
+  $dir = Join-Path $env:USERPROFILE 'Downloads'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $msi = Join-Path $dir 'Chrome64.msi'
+  L 'CHROME fetch standalone enterprise 64'
+  Invoke-WebRequest 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' -OutFile $msi -UseBasicParsing
+  Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait
+  L 'CHROME msi done'
+}
+function Install-GrokBot {
+  if (Try-Winget 'xAI.GrokBuild') { L 'GROK winget ok' } else { L 'GROK winget miss; open grok.com' }
+  $chrome = @( 
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if ($chrome) { Start-Process $chrome 'https://grok.com' } else { Start-Process 'https://grok.com' }
+}
+function Install-SnippingTool {
+  if (Try-Winget '9MZ95KL8MR0L') { L 'SNIP winget ok' } else { L 'SNIP winget miss' }
+  foreach ($exe in @(
+    "$env:SystemRoot\System32\SnippingTool.exe",
+    "$env:SystemRoot\System32\ScreenSketch.exe"
+  )) {
+    if (Test-Path $exe) { Start-Process $exe; return }
+  }
+  try { Start-Process 'ms-screenclip:' } catch { Start-Process 'snippingtool.exe' }
+}
+function Offer-DevPref {
+  Add-Type -AssemblyName System.Windows.Forms
+  $r = [System.Windows.Forms.MessageBox]::Show(
+    'Install Developers Preference package?' + [Environment]::NewLine + [Environment]::NewLine +
+    'Latest Chrome, Grok, and Snipping Tool.',
+    'Developers Preference',
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Question
+  )
+  if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { L 'DEVPREF declined'; return }
+  L 'DEVPREF yes'
+  Install-LatestChrome
+  Install-GrokBot
+  Install-SnippingTool
+  L 'DEVPREF done'
+}
 if ($Mode -eq 'HideBar') { Start-HideBar; return }
 if ($Mode -eq 'Badges') { Start-Badges; return }
 if (-not (Test-Admin)) {
@@ -139,4 +193,5 @@ if (-not (Test-Admin)) {
   return
 }
 Invoke-Wipe
+Offer-DevPref
 L 'DONE'
