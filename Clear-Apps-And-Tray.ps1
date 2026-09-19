@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Clear removable apps. Taskbar shows only Start and PowerShell.
+  Clear removable apps. Hide the taskbar; Start + PowerShell only when it slides out.
 #>
 [CmdletBinding()]
 param(
@@ -56,8 +56,8 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919e — Start + PowerShell layout'
-Write-Log 'Clear-Apps-And-Tray 20260919e — Start + PowerShell layout'
+Write-Host 'Clear-Apps-And-Tray 20260919f — auto-hide taskbar'
+Write-Log 'Clear-Apps-And-Tray 20260919f — auto-hide taskbar'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -96,10 +96,7 @@ function Invoke-UninstallCommand([string]$Command) {
       $exe = $Matches[1]
       $args = [string]$Matches[2]
     }
-    if ($exe -match '(?i)explorer(\.exe)?$') {
-      Write-Log "Skip explorer.exe uninstall: $Command"
-      return $false
-    }
+    if ($exe -match '(?i)explorer(\.exe)?$') { Write-Log "Skip explorer.exe uninstall: $Command"; return $false }
     if (-not (Test-Path -LiteralPath $exe)) { return $false }
     $low = "$args".ToLowerInvariant()
     if ($low -notmatch '/s\b|/silent|/quiet|/qn|/norestart') {
@@ -175,9 +172,7 @@ function Invoke-ClearStoreApps {
         }
       }
     }
-  } catch {
-    Write-Log "AppX enumeration failed: $($_.Exception.Message)"
-  }
+  } catch { Write-Log "AppX enumeration failed: $($_.Exception.Message)" }
   return $removed
 }
 
@@ -188,9 +183,7 @@ function Get-PowerShellStartLnk {
     (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\System Tools\Windows PowerShell.lnk'),
     (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\System Tools\Windows PowerShell.lnk')
   )
-  foreach ($p in $candidates) {
-    if (Test-Path -LiteralPath $p) { return $p }
-  }
+  foreach ($p in $candidates) { if (Test-Path -LiteralPath $p) { return $p } }
   $dir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell'
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $lnk = Join-Path $dir 'Windows PowerShell.lnk'
@@ -224,24 +217,34 @@ function Set-TaskbarLayoutXml {
   $xmlPath = Join-Path $shellDir 'LayoutModification.xml'
   [System.IO.File]::WriteAllText($xmlPath, $xml, [Text.UTF8Encoding]::new($false))
   Write-Log "Wrote $xmlPath"
+  foreach ($pol in @('HKCU:\Software\Policies\Microsoft\Windows\Explorer','HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer')) {
+    New-Item -Path $pol -Force | Out-Null
+    New-ItemProperty -Path $pol -Name 'StartLayoutFile' -Value $xmlPath -PropertyType String -Force | Out-Null
+  }
+}
 
-  $pol = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
-  New-Item -Path $pol -Force | Out-Null
-  New-ItemProperty -Path $pol -Name 'StartLayoutFile' -Value $xmlPath -PropertyType String -Force | Out-Null
-  New-ItemProperty -Path $pol -Name 'LockedStartLayout' -Value 0 -PropertyType DWord -Force | Out-Null
-
-  $polLm = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
-  New-Item -Path $polLm -Force | Out-Null
-  New-ItemProperty -Path $polLm -Name 'StartLayoutFile' -Value $xmlPath -PropertyType String -Force | Out-Null
+function Enable-TaskbarAutoHide {
+  Write-Log 'Enable taskbar auto-hide (StuckRects)'
+  foreach ($key in @('StuckRects3','StuckRects2')) {
+    $p = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\$key"
+    if (-not (Test-Path $p)) { continue }
+    try {
+      $s = [byte[]](Get-ItemProperty -Path $p).Settings
+      if ($s -and $s.Length -gt 8) {
+        $s[8] = [byte]($s[8] -bor 0x01)
+        Set-ItemProperty -Path $p -Name Settings -Value $s
+        Write-Log "Auto-hide bit set on $key"
+      }
+    } catch { Write-Log "StuckRects $key failed: $($_.Exception.Message)" }
+  }
 }
 
 function Restart-ShellNoFolderWindow {
-  Write-Log 'Refreshing shell: stop explorer only (do not start explorer.exe)'
+  Write-Log 'Refreshing shell: stop explorer only'
   try { Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
   $deadline = (Get-Date).AddSeconds(10)
   while (-not (Get-Process explorer -ErrorAction SilentlyContinue)) {
     if ((Get-Date) -gt $deadline) {
-      Write-Log 'Explorer did not auto-return; starting shell with /NOUACCHECK'
       Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList '/NOUACCHECK' | Out-Null
       break
     }
@@ -250,21 +253,14 @@ function Restart-ShellNoFolderWindow {
 }
 
 function Set-MinimalTaskbar {
-  Write-Host 'Applying Start + PowerShell taskbar...'
+  Write-Host 'Hiding taskbar (auto-hide). Start + PowerShell when the bar slides out.'
   Write-Log 'Set-MinimalTaskbar'
 
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
   New-Item -Path $path -Force | Out-Null
   $vals = @{
-    NoTrayItemsDisplay = 1
-    HideClock          = 1
-    HideSCAHealth      = 1
-    HideSCAMeetNow     = 1
-    HideSCANetwork     = 1
-    HideSCAVolume      = 1
-    HideSCAPower       = 1
-    NoAutoTrayNotify   = 1
-    HideLocaleBar      = 1
+    NoTrayItemsDisplay = 1; HideClock = 1; HideSCAHealth = 1; HideSCAMeetNow = 1
+    HideSCANetwork = 1; HideSCAVolume = 1; HideSCAPower = 1; NoAutoTrayNotify = 1; HideLocaleBar = 1
   }
   foreach ($k in $vals.Keys) {
     try { New-ItemProperty -Path $path -Name $k -Value $vals[$k] -PropertyType DWord -Force | Out-Null } catch {}
@@ -273,15 +269,8 @@ function Set-MinimalTaskbar {
   $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
   New-Item -Path $adv -Force | Out-Null
   $advVals = @{
-    TaskbarAl            = 0
-    ShowTaskViewButton   = 0
-    TaskbarDa            = 0
-    TaskbarMn            = 0
-    ShowCopilotButton    = 0
-    ShowTaskbarChat      = 0
-    SearchboxTaskbarMode = 0
-    ShowCortanaButton    = 0
-    EnableAutoTray       = 1
+    TaskbarAl = 0; ShowTaskViewButton = 0; TaskbarDa = 0; TaskbarMn = 0
+    ShowCopilotButton = 0; ShowTaskbarChat = 0; SearchboxTaskbarMode = 0; ShowCortanaButton = 0; EnableAutoTray = 1
   }
   foreach ($k in $advVals.Keys) {
     try { New-ItemProperty -Path $adv -Name $k -Value $advVals[$k] -PropertyType DWord -Force | Out-Null } catch {}
@@ -291,43 +280,21 @@ function Set-MinimalTaskbar {
   New-Item -Path $search -Force | Out-Null
   try { New-ItemProperty -Path $search -Name 'SearchboxTaskbarMode' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
 
-  $notify = 'HKCU:\Control Panel\NotifyIconSettings'
-  if (Test-Path $notify) {
-    Get-ChildItem $notify -ErrorAction SilentlyContinue | ForEach-Object {
-      try { New-ItemProperty -Path $_.PSPath -Name 'IsPromoted' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
-    }
-  }
-
-  $tip = 'HKCU:\Software\Microsoft\TabletTip\1.7'
-  New-Item -Path $tip -Force | Out-Null
-  try { New-ItemProperty -Path $tip -Name 'TipbandDesiredVisibility' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
-
-  $lang = 'HKCU:\Software\Microsoft\CTF\LangBar'
-  New-Item -Path $lang -Force | Out-Null
-  try { New-ItemProperty -Path $lang -Name 'ShowStatus' -Value 3 -PropertyType DWord -Force | Out-Null } catch {}
-  try { New-ItemProperty -Path $lang -Name 'ExtraIconsOnMinimized' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
-
+  Enable-TaskbarAutoHide
   Set-TaskbarLayoutXml
   Restart-ShellNoFolderWindow
 }
 
 $win32 = 0
 $store = 0
-if ($SkipWipe) {
-  Write-Log 'SkipWipe set. Leaving apps installed.'
-} else {
+if ($SkipWipe) { Write-Log 'SkipWipe set.' } else {
   Write-Host 'Clearing installed apps (no prompts)...'
   $win32 = Invoke-ClearWin32Apps
   $store = Invoke-ClearStoreApps
 }
-
-if ($SkipTray) {
-  Write-Log 'SkipTray set. Leaving taskbar as-is.'
-} else {
-  Set-MinimalTaskbar
-}
+if ($SkipTray) { Write-Log 'SkipTray set.' } else { Set-MinimalTaskbar }
 
 Write-Log "Finished. Win32 attempts=$win32 Store attempts=$store"
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
-Write-Host 'Taskbar target: Start + Windows PowerShell. Taskbar icons apply after the shell refresh.'
+Write-Host 'Taskbar is auto-hidden. Move the mouse to the bottom edge for Start + PowerShell.'
 Write-Host "Log: $log"
