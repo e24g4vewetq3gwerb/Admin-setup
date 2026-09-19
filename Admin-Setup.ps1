@@ -41,7 +41,6 @@ function Test-NameLike([string]$Name, [string[]]$Patterns) {
   return $false
 }
 
-# ---- helper loops (same file, different Mode) ----
 if ($Mode -eq 'HideBar') {
   $mutex = New-Object System.Threading.Mutex($false, 'Local\AdminSetupHideTaskbar')
   if (-not $mutex.WaitOne(0, $false)) { return }
@@ -167,7 +166,6 @@ if ($Mode -eq 'Badges') {
   return
 }
 
-# ---- main: wipe + install helpers ----
 $homeRoot = Join-Path $env:USERPROFILE 'admin'
 New-Item -ItemType Directory -Force -Path $homeRoot | Out-Null
 $log = Join-Path $homeRoot 'Admin-Setup.log'
@@ -179,7 +177,7 @@ function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
-Write-Log 'Admin-Setup 20260919 one-file'
+Write-Log 'Admin-Setup 20260919 strip Photos DevHome Widgets'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -254,16 +252,17 @@ function Invoke-ClearWin32Apps {
   return $removed
 }
 function Invoke-ClearStoreApps {
-  $keepAppx = @('Microsoft.WindowsStore','Microsoft.StorePurchaseApp','Microsoft.WindowsTerminal','MicrosoftWindows.Client*','Microsoft.Windows.*','Microsoft.UI.*','Microsoft.VCLibs*','Microsoft.Services.Store*','windows.immersivecontrolpanel','Microsoft.DesktopAppInstaller','Microsoft.SecHealthUI','Microsoft.MicrosoftEdge*','Microsoft.ECApp','Microsoft.LockApp','Microsoft.AAD.BrokerPlugin','Microsoft.AccountsControl','Microsoft.BioEnrollment','Microsoft.CredDialogHost','Microsoft.Win32WebViewHost','Microsoft.XboxGameCallableUI','Microsoft.PPIProjection')
+  $forceRemove = @('Microsoft.Windows.Photos*','Microsoft.Windows.DevHome*','MicrosoftWindows.Client.WebExperience*')
+  $keepAppx = @('Microsoft.WindowsStore','Microsoft.StorePurchaseApp','Microsoft.WindowsTerminal','MicrosoftWindows.Client*','Microsoft.UI.*','Microsoft.VCLibs*','Microsoft.Services.Store*','windows.immersivecontrolpanel','Microsoft.DesktopAppInstaller','Microsoft.SecHealthUI','Microsoft.MicrosoftEdge*','Microsoft.ECApp','Microsoft.LockApp','Microsoft.AAD.BrokerPlugin','Microsoft.AccountsControl','Microsoft.BioEnrollment','Microsoft.CredDialogHost','Microsoft.Win32WebViewHost','Microsoft.XboxGameCallableUI','Microsoft.PPIProjection')
   $removed = 0
   try {
     foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
       $name = [string]$pkg.Name
       if (-not $name) { continue }
       $script:ReportFound++
-      if ($pkg.IsFramework -or $pkg.NonRemovable) { [void]$script:ReportKept.Add("store-system  $name"); continue }
-      if (Test-NameLike $name $keepAppx) { [void]$script:ReportKept.Add("store-keep  $name"); continue }
-      if ($name -like 'Microsoft.Windows.*' -or $name -like 'Windows.*') { [void]$script:ReportKept.Add("store-keep  $name"); continue }
+      $forceIt = Test-NameLike $name $forceRemove
+      if (-not $forceIt -and ($pkg.IsFramework -or $pkg.NonRemovable)) { [void]$script:ReportKept.Add("store-system  $name"); continue }
+      if (-not $forceIt -and (Test-NameLike $name $keepAppx)) { [void]$script:ReportKept.Add("store-keep  $name"); continue }
       try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue; $removed++; [void]$script:ReportCleared.Add("Store: $name") }
       catch { try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $removed++; [void]$script:ReportCleared.Add("Store: $name") } catch { [void]$script:ReportFailed.Add("Store: $name") } }
     }
