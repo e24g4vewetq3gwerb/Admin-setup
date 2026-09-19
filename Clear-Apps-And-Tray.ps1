@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Clear removable apps and empty the Windows system tray.
+  Clear removable apps. Taskbar shows only Start and PowerShell.
 
 .DESCRIPTION
-  Uninstalls removable Win32 and Store apps, then writes tray-hide
-  registry values. Does not start explorer.exe, does not restart the PC.
+  Uninstalls removable Win32 and Store apps, hides tray and extra
+  taskbar chrome, pins Windows PowerShell. Does not start explorer.exe.
 #>
 [CmdletBinding()]
 param(
@@ -60,8 +60,8 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919c — no Explorer launch'
-Write-Log 'Clear-Apps-And-Tray 20260919c — no Explorer launch'
+Write-Host 'Clear-Apps-And-Tray 20260919d — Start + PowerShell only'
+Write-Log 'Clear-Apps-And-Tray 20260919d — Start + PowerShell only'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -223,16 +223,45 @@ function Invoke-ClearStoreApps {
   return $removed
 }
 
-function Set-EmptySystemTray {
-  Write-Host 'Writing tray hide values (no Explorer restart)...'
-  Write-Log 'Set-EmptySystemTray registry only'
+function Set-PowerShellTaskbarPin {
+  $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+  New-Item -ItemType Directory -Force -Path $pinDir | Out-Null
+  Get-ChildItem -LiteralPath $pinDir -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.Name -notmatch '(?i)powershell') {
+      try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+    }
+  }
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $lnk = Join-Path $pinDir 'Windows PowerShell.lnk'
+  try {
+    $w = New-Object -ComObject WScript.Shell
+    $s = $w.CreateShortcut($lnk)
+    $s.TargetPath = $ps
+    $s.WorkingDirectory = (Join-Path $env:SystemRoot 'System32')
+    $s.WindowStyle = 1
+    $s.Description = 'Windows PowerShell'
+    $s.IconLocation = "$ps,0"
+    $s.Save()
+    Write-Log "Pinned PowerShell shortcut: $lnk"
+  } catch {
+    Write-Log "PowerShell pin failed: $($_.Exception.Message)"
+  }
+}
+
+function Set-MinimalTaskbar {
+  Write-Host 'Taskbar: Start + PowerShell only (no Explorer restart)...'
+  Write-Log 'Set-MinimalTaskbar'
 
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
   New-Item -Path $path -Force | Out-Null
   $vals = @{
     NoTrayItemsDisplay = 1
+    HideClock          = 1
     HideSCAHealth      = 1
     HideSCAMeetNow     = 1
+    HideSCANetwork     = 1
+    HideSCAVolume      = 1
+    HideSCAPower       = 1
     NoAutoTrayNotify   = 1
     HideLocaleBar      = 1
   }
@@ -243,6 +272,7 @@ function Set-EmptySystemTray {
   $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
   New-Item -Path $adv -Force | Out-Null
   $advVals = @{
+    TaskbarAl            = 0
     ShowTaskViewButton   = 0
     TaskbarDa            = 0
     TaskbarMn            = 0
@@ -250,11 +280,22 @@ function Set-EmptySystemTray {
     ShowTaskbarChat      = 0
     SearchboxTaskbarMode = 0
     ShowCortanaButton    = 0
+    ShowStatusBar        = 0
     EnableAutoTray       = 1
+    TaskbarSizeMove      = 0
   }
   foreach ($k in $advVals.Keys) {
     try { New-ItemProperty -Path $adv -Name $k -Value $advVals[$k] -PropertyType DWord -Force | Out-Null } catch {}
   }
+
+  $search = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'
+  New-Item -Path $search -Force | Out-Null
+  try { New-ItemProperty -Path $search -Name 'SearchboxTaskbarMode' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
+
+  $fe = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
+  New-Item -Path $fe -Force | Out-Null
+  try { New-ItemProperty -Path $fe -Name 'HideRecommendedPersonalizedSites' -Value 1 -PropertyType DWord -Force | Out-Null } catch {}
+  try { New-ItemProperty -Path $fe -Name 'DisableSearchBoxSuggestions' -Value 1 -PropertyType DWord -Force | Out-Null } catch {}
 
   $notify = 'HKCU:\Control Panel\NotifyIconSettings'
   if (Test-Path $notify) {
@@ -271,6 +312,8 @@ function Set-EmptySystemTray {
   New-Item -Path $lang -Force | Out-Null
   try { New-ItemProperty -Path $lang -Name 'ShowStatus' -Value 3 -PropertyType DWord -Force | Out-Null } catch {}
   try { New-ItemProperty -Path $lang -Name 'ExtraIconsOnMinimized' -Value 0 -PropertyType DWord -Force | Out-Null } catch {}
+
+  Set-PowerShellTaskbarPin
 }
 
 $win32 = 0
@@ -284,11 +327,12 @@ if ($SkipWipe) {
 }
 
 if ($SkipTray) {
-  Write-Log 'SkipTray set. Leaving tray as-is.'
+  Write-Log 'SkipTray set. Leaving taskbar as-is.'
 } else {
-  Set-EmptySystemTray
+  Set-MinimalTaskbar
 }
 
 Write-Log "Finished. Win32 attempts=$win32 Store attempts=$store"
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
+Write-Host 'Taskbar target: Start + Windows PowerShell only. Sign out/in if the pin is not visible yet.'
 Write-Host "Log: $log"

@@ -1,20 +1,19 @@
 # Clear apps and system tray
 
-One PowerShell script. Uninstall removable apps. Empty the notification area. Does not restart.
+One PowerShell script. Uninstall removable apps. Strip the taskbar down to **Start** and **Windows PowerShell**. Does not restart Explorer or the PC.
 
 Repo: [e24g4vewetq3gwerb/Admin-setup](https://github.com/e24g4vewetq3gwerb/Admin-setup)
-
-This replaces the old Admin Setup flow (no Grok Bot / Chrome offer, no desktop icon installer, no reboot).
 
 ## What it does
 
 1. Elevates with UAC if needed
 2. Uninstalls removable Win32 apps (drivers, runtimes, Edge/WebView2 kept)
 3. Removes removable Store packages (Store, App Installer, security / lock / system packages kept)
-4. Hides the system tray and extra taskbar buttons
-5. Exits. Never schedules a reboot.
+4. Hides search, widgets, Task View, Copilot, chat, clock, and the notification area
+5. Pins Windows PowerShell next to Start; removes other taskbar pins
+6. Exits. Never schedules a reboot. Never launches Explorer.
 
-Chrome, Grok Bot, Office, games, and other third-party apps are not kept.
+The Start button is part of the shell and stays. The PowerShell pin may not appear until the next sign-in.
 
 ## Run
 
@@ -22,20 +21,14 @@ Chrome, Grok Bot, Office, games, and other third-party apps are not kept.
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\admin" | Out-Null
 irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Clear-Apps-And-Tray.ps1 -OutFile "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
 Unblock-File "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
-powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
-```
-
-From a clone:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
 ```
 
 ## Switches
 
 | Switch | Effect |
 |--------|--------|
-| `-SkipWipe` | Only clear the tray |
+| `-SkipWipe` | Only apply the taskbar / tray layout |
 | `-SkipTray` | Only uninstall apps |
 
 Log: `%USERPROFILE%\admin\Clear-Apps-And-Tray.log`
