@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Clear removable apps and remove the Windows taskbar.
+  Clear removable apps, hide the taskbar, show a folder logo to open files.
 #>
 [CmdletBinding()]
 param(
@@ -44,8 +44,8 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919h — taskbar removed'
-Write-Log 'Clear-Apps-And-Tray 20260919h — taskbar removed'
+Write-Host 'Clear-Apps-And-Tray 20260919i — folder logo, no taskbar'
+Write-Log 'Clear-Apps-And-Tray 20260919i — folder logo, no taskbar'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -62,30 +62,34 @@ Write-Log "==== start user=$env:USERNAME computer=$env:COMPUTERNAME ===="
 function Stop-OldHelpers {
   try { Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'AdminSetupStartLogo' -ErrorAction SilentlyContinue } catch {}
   Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($_.CommandLine -and ($_.CommandLine -like '*Show-StartLogo.ps1*' -or $_.CommandLine -like '*Hide-Taskbar.ps1*')) {
+    if ($_.CommandLine -and ($_.CommandLine -like '*Show-StartLogo.ps1*' -or $_.CommandLine -like '*Show-FolderLogo.ps1*')) {
       try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
     }
   }
 }
 
-function Start-HideTaskbar {
-  $dest = Join-Path $homeRoot 'Hide-Taskbar.ps1'
+function Install-Helper([string]$Name) {
+  $dest = Join-Path $homeRoot $Name
   $here = Split-Path -Parent (Get-SelfPath)
-  $local = Join-Path $here 'Hide-Taskbar.ps1'
+  $local = Join-Path $here $Name
   if ($local -and (Test-Path -LiteralPath $local)) {
     Copy-Item -LiteralPath $local -Destination $dest -Force
   } else {
     try {
-      Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Hide-Taskbar.ps1' -OutFile $dest
-    } catch { Write-Log "Hide-Taskbar download failed: $($_.Exception.Message)" }
+      Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/$Name" -OutFile $dest
+    } catch { Write-Log "$Name download failed: $($_.Exception.Message)" }
   }
-  if (-not (Test-Path -LiteralPath $dest)) { return }
+  return $dest
+}
+
+function Start-HiddenScript([string]$Path, [string]$RunName) {
+  if (-not (Test-Path -LiteralPath $Path)) { return }
   $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
   New-Item -Path $runKey -Force | Out-Null
-  $cmd = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dest`""
-  New-ItemProperty -Path $runKey -Name 'AdminSetupHideTaskbar' -Value $cmd -PropertyType String -Force | Out-Null
-  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$dest`"") | Out-Null
-  Write-Log "Started $dest"
+  $cmd = "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Path`""
+  New-ItemProperty -Path $runKey -Name $RunName -Value $cmd -PropertyType String -Force | Out-Null
+  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$Path`"") | Out-Null
+  Write-Log "Started $Path"
 }
 
 function Invoke-UninstallCommand([string]$Command) {
@@ -147,7 +151,7 @@ function Invoke-ClearStoreApps {
 }
 
 function Set-NoTaskbar {
-  Write-Host 'Removing taskbar...'
+  Write-Host 'Removing taskbar and placing folder logo...'
   Stop-OldHelpers
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
   New-Item -Path $path -Force | Out-Null
@@ -174,7 +178,8 @@ function Set-NoTaskbar {
       if ($s -and $s.Length -gt 8) { $s[8] = [byte]($s[8] -bor 0x01); Set-ItemProperty -Path $p -Name Settings -Value $s }
     } catch {}
   }
-  Start-HideTaskbar
+  Start-HiddenScript (Install-Helper 'Hide-Taskbar.ps1') 'AdminSetupHideTaskbar'
+  Start-HiddenScript (Install-Helper 'Show-FolderLogo.ps1') 'AdminSetupFolderLogo'
 }
 
 $win32 = 0; $store = 0
@@ -186,5 +191,5 @@ if ($SkipWipe) { Write-Log 'SkipWipe' } else {
 if ($SkipTray) { Write-Log 'SkipTray' } else { Set-NoTaskbar }
 
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
-Write-Host 'Taskbar window is hidden. Win key still opens Start. To restore: Task Manager end Hide-Taskbar.ps1, then restart Explorer.'
+Write-Host 'Yellow folder logo at bottom center opens your user folder. Taskbar stays hidden.'
 Write-Host "Log: $log"
