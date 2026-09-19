@@ -1,75 +1,44 @@
 <#
 .SYNOPSIS
-  Preview or delete everything on all drives except Windows system files.
-  Default is -WhatIf (no delete). Live run requires -ConfirmPhrase WIPE-ALL-DATA.
-  Not wired to the trash badge.
+  Delete everything on all fixed drives except Windows system files.
+  Live run: -ConfirmPhrase WIPE-ALL-DATA
+  Preview:  -Preview
 #>
 [CmdletBinding()]
 param(
-  [switch]$WhatIf,
-  [string]$ConfirmPhrase = '',
-  [string[]]$AlsoKeep = @()
+  [switch]$Preview,
+  [string]$ConfirmPhrase = ''
 )
 Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-
-if (-not $PSBoundParameters.ContainsKey('WhatIf')) { $WhatIf = $true }
 
 function Test-IsAdmin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   return (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 function Get-SelfPath {
-  foreach ($c in @($PSCommandPath, $MyInvocation.MyCommand.Path)) {
-    if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+  foreach ($c in @($PSCommandPath, $MyInvocation.MyCommand.Path, $MyInvocation.MyCommand.Definition)) {
+    if ($c -and $c -like '*.ps1' -and (Test-Path -LiteralPath $c)) { return $c }
   }
   return $null
 }
 
+$live = ($ConfirmPhrase -eq 'WIPE-ALL-DATA')
+if (-not $live) { $Preview = $true }
+
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
-  if (-not $self) { throw 'Run elevated.' }
+  if (-not $self) { throw 'Save as a .ps1 and run elevated.' }
   $arg = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$self`"")
-  if ($WhatIf) { $arg += '-WhatIf' }
-  if ($ConfirmPhrase) { $arg += @('-ConfirmPhrase', $ConfirmPhrase) }
-  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arg | Out-Null
+  if ($live) { $arg += @('-ConfirmPhrase','WIPE-ALL-DATA') } else { $arg += '-Preview' }
+  Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -Wait -ArgumentList $arg | Out-Null
   return
 }
 
 $osRoot = $env:SystemDrive.TrimEnd('\')
 $winDir = $env:SystemRoot
 $adminDir = Join-Path $env:USERPROFILE 'admin'
-$keepExact = New-Object System.Collections.Generic.List[string]
-foreach ($k in @(
-    $winDir,
-    (Join-Path $osRoot 'Boot'),
-    (Join-Path $osRoot 'bootmgr'),
-    (Join-Path $osRoot 'BOOTNXT'),
-    (Join-Path $osRoot 'BOOTSECT.BAK'),
-    (Join-Path $osRoot 'Recovery'),
-    (Join-Path $osRoot '$WinREAgent'),
-    (Join-Path $osRoot 'System Volume Information'),
-    (Join-Path $osRoot 'pagefile.sys'),
-    (Join-Path $osRoot 'hiberfil.sys'),
-    (Join-Path $osRoot 'swapfile.sys'),
-    $adminDir
-  ) + @($AlsoKeep)) {
-  if ($k) { [void]$keepExact.Add($k) }
-}
-
-function Test-IsKept([string]$Path) {
-  try { $full = [IO.Path]::GetFullPath($Path) } catch { return $false }
-  foreach ($k in $keepExact) {
-    try { $kk = [IO.Path]::GetFullPath($k) } catch { continue }
-    if ($full -eq $kk) { return $true }
-    $prefix = $kk.TrimEnd('\') + '\'
-    if ($full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-  }
-  return $false
-}
-
-$live = (-not $WhatIf) -and ($ConfirmPhrase -eq 'WIPE-ALL-DATA')
 New-Item -ItemType Directory -Force -Path $adminDir | Out-Null
 $log = Join-Path $adminDir 'Wipe-All-Except-Windows.log'
 function Write-Step([string]$m) {
@@ -77,38 +46,87 @@ function Write-Step([string]$m) {
   try { Add-Content -Path $log -Value $line } catch {}
   Write-Host $line
 }
-Write-Step "Start WhatIf=$WhatIf Live=$live OS=$osRoot"
 
-if (-not $WhatIf -and -not $live) {
-  Write-Step 'Refusing live delete. Use -WhatIf:$false -ConfirmPhrase WIPE-ALL-DATA'
-  return
+$keepNames = @(
+  'windows',
+  'boot',
+  'bootmgr',
+  'bootnxt',
+  'bootsect.bak',
+  'recovery',
+  '$winreagent',
+  'system volume information',
+  'pagefile.sys',
+  'hiberfil.sys',
+  'swapfile.sys',
+  '$recycle.bin',
+  'documents and settings'
+)
+function Test-IsKept([string]$Path) {
+  try { $full = [IO.Path]::GetFullPath($Path) } catch { return $false }
+  $leaf = [IO.Path]::GetFileName($full)
+  if ($keepNames -contains $leaf.ToLowerInvariant()) { return $true }
+  $win = [IO.Path]::GetFullPath($winDir)
+  if ($full -eq $win -or $full.StartsWith($win.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  $ad = [IO.Path]::GetFullPath($adminDir)
+  if ($full -eq $ad -or $full.StartsWith($ad.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  return $false
 }
 
-function Remove-Target([string]$Path) {
+function Clear-Tree([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path)) { return }
   if (Test-IsKept $Path) { Write-Step "KEEP $Path"; return }
-  if (-not $live) { Write-Step "WOULD DELETE $Path"; return }
+  if ($Preview -or -not $live) { Write-Step "WOULD DELETE $Path"; return }
   Write-Step "DELETE $Path"
-  try { cmd /c "takeown /F `"$Path`" /R /D Y" | Out-Null } catch {}
-  try { cmd /c "icacls `"$Path`" /grant Administrators:F /T /C" | Out-Null } catch {}
-  try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue } catch {
-    Write-Step "FAIL $Path $($_.Exception.Message)"
+  try { cmd.exe /c "takeown /F `"$Path`" /R /D Y >nul 2>&1" } catch {}
+  try { cmd.exe /c "icacls `"$Path`" /grant Administrators:F /T /C /Q >nul 2>&1" } catch {}
+  try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+  if (Test-Path -LiteralPath $Path) {
+    $empty = Join-Path $env:TEMP ('wipeempty-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $empty | Out-Null
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+      try { cmd.exe /c "robocopy `"$empty`" `"$Path`" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NC /NS >nul" } catch {}
+      try { cmd.exe /c "rd /s /q `"$Path`"" } catch {}
+    } else {
+      try { cmd.exe /c "del /f /q `"$Path`"" } catch {}
+    }
+    try { Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue } catch {}
+  }
+  if (Test-Path -LiteralPath $Path) { Write-Step "STILL THERE $Path" } else { Write-Step "GONE $Path" }
+}
+
+Write-Step "Start live=$live preview=$Preview OS=$osRoot user=$env:USERNAME"
+Write-Host 'Drives:'
+Get-CimInstance Win32_LogicalDisk | ForEach-Object {
+  Write-Step ("DISK {0} type={1} size={2}" -f $_.DeviceID, $_.DriveType, $_.Size)
+}
+
+# 2 = removable, 3 = local, 4 = network skip
+$disks = @(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -in 2, 3 })
+if ($disks.Count -eq 0) { $disks = Get-PSDrive -PSProvider FileSystem }
+
+foreach ($d in $disks) {
+  $root = if ($d.DeviceID) { ($d.DeviceID.TrimEnd('\') + '\') } else { $d.Root }
+  if (-not (Test-Path -LiteralPath $root)) { Write-Step "SKIP missing $root"; continue }
+  Write-Step "SCAN $root"
+  Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | ForEach-Object {
+    Clear-Tree $_.FullName
   }
 }
 
-Get-PSDrive -PSProvider FileSystem | ForEach-Object {
-  $root = $_.Root.TrimEnd('\')
-  if ($root -eq $osRoot) { return }
-  Write-Step "DRIVE $root"
-  Get-ChildItem -LiteralPath ($root + '\') -Force -ErrorAction SilentlyContinue | ForEach-Object {
-    Remove-Target $_.FullName
-  }
-}
-
-Write-Step "DRIVE $osRoot"
-Get-ChildItem -LiteralPath ($osRoot + '\') -Force -ErrorAction SilentlyContinue | ForEach-Object {
-  Remove-Target $_.FullName
+# Explicit user junk even if something kept Users
+foreach ($p in @(
+    (Join-Path $env:USERPROFILE 'Downloads'),
+    (Join-Path $env:USERPROFILE 'Documents'),
+    (Join-Path $env:USERPROFILE 'Desktop'),
+    (Join-Path $env:USERPROFILE 'Pictures'),
+    (Join-Path $env:USERPROFILE 'Videos'),
+    (Join-Path $env:USERPROFILE 'Music'),
+    (Join-Path $env:USERPROFILE 'OneDrive')
+  )) {
+  if (Test-Path -LiteralPath $p) { Clear-Tree $p }
 }
 
 Write-Step 'Done'
-Write-Host "Log: $log"
+Write-Host "Log $log"
+Start-Process notepad.exe $log | Out-Null
