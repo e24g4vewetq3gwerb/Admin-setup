@@ -1,8 +1,6 @@
 <#
 .SYNOPSIS
-  One script: wipe removable apps, hide the taskbar, show three launch badges.
-.PARAMETER Mode
-  All (default) | Wipe | HideBar | Badges
+  Wipe apps except Terminal and File Explorer. Hide taskbar. Three badges.
 #>
 [CmdletBinding()]
 param(
@@ -43,8 +41,7 @@ function Test-NameLike([string]$Name, [string[]]$Patterns) {
 function Test-KeepEssential([string]$Name) {
   return (Test-NameLike $Name @(
     'Windows Terminal*','Microsoft.WindowsTerminal*','*WindowsTerminal*',
-    '*FileExp*','*File Explorer*','*Explorer++*',
-    'Microsoft Windows Explorer*'
+    '*FileExp*','*File Explorer*','*Explorer++*','Microsoft Windows Explorer*'
   ))
 }
 
@@ -86,31 +83,18 @@ if ($Mode -eq 'Badges') {
     $Img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $ms.Position = 0
     $bmp = New-Object System.Windows.Media.Imaging.BitmapImage
-    $bmp.BeginInit()
-    $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-    $bmp.StreamSource = $ms
-    $bmp.EndInit()
-    $bmp.Freeze()
-    $ms.Dispose()
-    return $bmp
+    $bmp.BeginInit(); $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $bmp.StreamSource = $ms; $bmp.EndInit(); $bmp.Freeze(); $ms.Dispose(); return $bmp
   }
   function Get-ExeImage([string]$Path) {
-    try {
-      $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path)
-      if (-not $ico) { return $null }
-      return Convert-ToBitmapSource $ico.ToBitmap()
-    } catch { return $null }
+    try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path); if ($ico) { return Convert-ToBitmapSource $ico.ToBitmap() } } catch {}
+    return $null
   }
   $folderImg = Get-ExeImage (Join-Path $env:SystemRoot 'explorer.exe')
   $psImg = Get-ExeImage (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
   $selfPath = Get-SelfPath
   $xaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Launch" WindowStyle="None" AllowsTransparency="True"
-        Background="Transparent" ShowInTaskbar="False" Topmost="True"
-        ResizeMode="NoResize" SizeToContent="WidthAndHeight"
-        UseLayoutRounding="True" SnapsToDevicePixels="True">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Launch" WindowStyle="None" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize" SizeToContent="WidthAndHeight" UseLayoutRounding="True" SnapsToDevicePixels="True">
   <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
     <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder" ToolTip="Open your folder">
       <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" StrokeThickness="2.2"/>
@@ -122,14 +106,12 @@ if ($Mode -eq 'Badges') {
     </Grid>
     <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript" ToolTip="Clear apps (asks first)">
       <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" StrokeThickness="2.2"/>
-      <Viewbox Width="30" Height="30">
-        <Canvas Width="48" Height="48">
-          <Path Fill="#FF3DDC84" Data="M 10,16 L 38,16 L 36,42 L 12,42 Z"/>
-          <Path Fill="#FF0E1C14" Data="M 18,16 L 18,42 M 24,16 L 24,42 M 30,16 L 30,42" Stroke="#FF0E1C14" StrokeThickness="2"/>
-          <Path Fill="#FF3DDC84" Data="M 8,12 L 40,12 L 40,16 L 8,16 Z"/>
-          <Path Fill="#FF3DDC84" Data="M 18,6 L 30,6 L 32,12 L 16,12 Z"/>
-        </Canvas>
-      </Viewbox>
+      <Viewbox Width="30" Height="30"><Canvas Width="48" Height="48">
+        <Path Fill="#FF3DDC84" Data="M 10,16 L 38,16 L 36,42 L 12,42 Z"/>
+        <Path Fill="#FF0E1C14" Data="M 18,16 L 18,42 M 24,16 L 24,42 M 30,16 L 30,42" Stroke="#FF0E1C14" StrokeThickness="2"/>
+        <Path Fill="#FF3DDC84" Data="M 8,12 L 40,12 L 40,16 L 8,16 Z"/>
+        <Path Fill="#FF3DDC84" Data="M 18,6 L 30,6 L 32,12 L 16,12 Z"/>
+      </Canvas></Viewbox>
     </Grid>
   </StackPanel>
 </Window>
@@ -144,25 +126,16 @@ if ($Mode -eq 'Badges') {
     $window.Top = $sh - $window.ActualHeight - 16
   }
   function Confirm-AndRun {
-    if (-not $selfPath -or -not (Test-Path -LiteralPath $selfPath)) {
-      [System.Windows.MessageBox]::Show('Script file not found.', 'Admin Setup', 'OK', 'Warning') | Out-Null
-      return
-    }
-    $answer = [System.Windows.MessageBox]::Show(
-      "Run Clear Apps and Tray again?`n`nThis will uninstall everything except Terminal and File Explorer.`nA report opens when it finishes.`n`nContinue?",
-      'Confirm wipe', 'YesNo', 'Exclamation', 'No')
+    $target = Join-Path $env:USERPROFILE 'admin\Admin-Setup.ps1'
+    if (-not (Test-Path -LiteralPath $target)) { $target = $selfPath }
+    if (-not $target -or -not (Test-Path -LiteralPath $target)) { [System.Windows.MessageBox]::Show('Script file not found.', 'Admin Setup', 'OK', 'Warning') | Out-Null; return }
+    $answer = [System.Windows.MessageBox]::Show("Run wipe again?`n`nKeeps Terminal and File Explorer only.`n`nContinue?", 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
     if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    Start-Process -FilePath $ps -Verb RunAs -ArgumentList @(
-      '-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$selfPath`"",'-Mode','Wipe'
-    ) | Out-Null
+    Start-Process -FilePath $ps -Verb RunAs -ArgumentList @('-STA','-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$target`"",'-Mode','Wipe') | Out-Null
   }
-  $window.FindName('BtnFolder').Add_MouseLeftButtonUp({
-    Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList @("`"$env:USERPROFILE`"") | Out-Null
-  })
-  $window.FindName('BtnPs').Add_MouseLeftButtonUp({
-    Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null
-  })
+  $window.FindName('BtnFolder').Add_MouseLeftButtonUp({ Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList @("`"$env:USERPROFILE`"") | Out-Null })
+  $window.FindName('BtnPs').Add_MouseLeftButtonUp({ Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null })
   $window.FindName('BtnScript').Add_MouseLeftButtonUp({ Confirm-AndRun })
   $window.Add_ContentRendered({ Move-ToBottom })
   $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -179,12 +152,13 @@ $log = Join-Path $homeRoot 'Admin-Setup.log'
 $script:ReportKept = New-Object System.Collections.Generic.List[string]
 $script:ReportCleared = New-Object System.Collections.Generic.List[string]
 $script:ReportFailed = New-Object System.Collections.Generic.List[string]
+$script:ReportLeft = New-Object System.Collections.Generic.List[string]
 $script:ReportFound = 0
 function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
-Write-Log 'Admin-Setup 20260919 keep Terminal+Explorer only'
+Write-Log 'Admin-Setup leftover scan'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -200,11 +174,11 @@ if (-not (Test-IsAdmin)) {
 function Install-Self {
   $self = Get-SelfPath
   $dest = Join-Path $homeRoot 'Admin-Setup.ps1'
-  if ($self -and (Test-Path -LiteralPath $self)) {
-    if ([IO.Path]::GetFullPath($self) -ne [IO.Path]::GetFullPath($dest)) {
-      Copy-Item -LiteralPath $self -Destination $dest -Force
-    }
+  if ($self -and (Test-Path -LiteralPath $self) -and ([IO.Path]::GetFullPath($self) -ne [IO.Path]::GetFullPath($dest))) {
+    Copy-Item -LiteralPath $self -Destination $dest -Force
   }
+  $old = Join-Path $homeRoot 'Clear-Apps-And-Tray.ps1'
+  if (Test-Path -LiteralPath $dest) { Copy-Item -LiteralPath $dest -Destination $old -Force }
   return $dest
 }
 function Start-Mode([string]$Path, [string]$HelperMode, [string]$RunName, [switch]$Sta) {
@@ -243,37 +217,48 @@ function Invoke-ClearWin32Apps {
     $name = [string](Get-Prop $prog 'DisplayName')
     if (-not $name) { continue }
     $script:ReportFound++
-    if (Test-KeepEssential $name) { [void]$script:ReportKept.Add("keep  $name"); continue }
+    if (Test-KeepEssential $name) { [void]$script:ReportKept.Add($name); continue }
     $uninstall = [string](Get-Prop $prog 'QuietUninstallString')
     if (-not $uninstall) { $uninstall = [string](Get-Prop $prog 'UninstallString') }
-    if (-not $uninstall) { [void]$script:ReportFailed.Add("no-uninstaller  $name"); continue }
+    if (-not $uninstall) { [void]$script:ReportFailed.Add($name); continue }
     if (Invoke-UninstallCommand $uninstall) { $removed++; [void]$script:ReportCleared.Add($name) } else { [void]$script:ReportFailed.Add($name) }
   }
   return $removed
 }
 function Remove-OneStore([string]$FullName) {
-  $ok = $false
-  try { Remove-AppxPackage -Package $FullName -AllUsers -ErrorAction Stop; $ok = $true } catch {}
-  if (-not $ok) { try { Remove-AppxPackage -Package $FullName -ErrorAction Stop; $ok = $true } catch {} }
-  if (-not $ok) {
-    try { Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.PackageName -eq $FullName -or $_.DisplayName -eq $FullName } | ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue } } catch {}
-    try { Remove-AppxPackage -Package $FullName -AllUsers -ErrorAction Stop; $ok = $true } catch {}
-  }
-  return $ok
+  try { Remove-AppxPackage -Package $FullName -AllUsers -ErrorAction Stop; return $true } catch {}
+  try { Remove-AppxPackage -Package $FullName -ErrorAction Stop; return $true } catch {}
+  return $false
 }
 function Invoke-ClearStoreApps {
   $removed = 0
-  try {
-    foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
-      $name = [string]$pkg.Name
-      if (-not $name) { continue }
-      $script:ReportFound++
-      if (Test-KeepEssential $name) { [void]$script:ReportKept.Add("keep  $name"); continue }
-      if (Remove-OneStore $pkg.PackageFullName) { $removed++; [void]$script:ReportCleared.Add("Store: $name") }
-      else { [void]$script:ReportFailed.Add("Store: $name") }
-    }
-  } catch {}
+  foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
+    $name = [string]$pkg.Name
+    if (-not $name) { continue }
+    $script:ReportFound++
+    if (Test-KeepEssential $name) { [void]$script:ReportKept.Add("Store: $name"); continue }
+    if (Remove-OneStore $pkg.PackageFullName) { $removed++; [void]$script:ReportCleared.Add("Store: $name") }
+    else { [void]$script:ReportFailed.Add("Store: $name") }
+  }
   return $removed
+}
+function Get-StillInstalled {
+  $seen = @{}
+  $paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
+  foreach ($prog in @(Get-ItemProperty $paths -ErrorAction SilentlyContinue)) {
+    $name = [string](Get-Prop $prog 'DisplayName')
+    if (-not $name) { continue }
+    $tag = if (Test-KeepEssential $name) { 'keep  ' } else { 'left  ' }
+    $key = "win32:$name"
+    if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; [void]$script:ReportLeft.Add("$tag$name") }
+  }
+  foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
+    $name = [string]$pkg.Name
+    if (-not $name) { continue }
+    $tag = if (Test-KeepEssential $name) { 'keep  Store: ' } else { 'left  Store: ' }
+    $key = "store:$name"
+    if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; [void]$script:ReportLeft.Add("$tag$name") }
+  }
 }
 function Set-NoTaskbar {
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
@@ -282,11 +267,6 @@ function Set-NoTaskbar {
     try { New-ItemProperty -Path $path -Name $pair.Key -Value $pair.Value -PropertyType DWord -Force | Out-Null } catch {}
   }
   $installed = Install-Self
-  try {
-    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'AdminSetupHideTaskbar' -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'AdminSetupFolderLogo' -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'AdminSetupStartLogo' -ErrorAction SilentlyContinue
-  } catch {}
   Start-Mode $installed 'HideBar' 'AdminSetupHideTaskbar'
   Start-Mode $installed 'Badges' 'AdminSetupFolderLogo' -Sta
 }
@@ -297,24 +277,24 @@ function Show-WipeReport {
   [void]$lines.Add("Admin-Setup  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
   [void]$lines.Add("Computer  $env:COMPUTERNAME    User  $env:USERNAME")
   [void]$lines.Add('')
-  [void]$lines.Add("Found     $($script:ReportFound)")
-  [void]$lines.Add("Cleared   $($script:ReportCleared.Count)")
-  [void]$lines.Add("Kept      $($script:ReportKept.Count)")
-  [void]$lines.Add("Failed    $($script:ReportFailed.Count)")
+  [void]$lines.Add("Found this run     $($script:ReportFound)")
+  [void]$lines.Add("Cleared            $($script:ReportCleared.Count)")
+  [void]$lines.Add("Failed this run    $($script:ReportFailed.Count)")
+  [void]$lines.Add("Still installed    $($script:ReportLeft.Count)")
   [void]$lines.Add('')
-  [void]$lines.Add('--- Cleared ---')
+  [void]$lines.Add('--- Still installed (keep = Terminal/Explorer, left = everything else Windows would not drop) ---')
+  if ($script:ReportLeft.Count -eq 0) { [void]$lines.Add('(none)') } else { $script:ReportLeft | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
+  [void]$lines.Add('')
+  [void]$lines.Add('--- Cleared this run ---')
   if ($script:ReportCleared.Count -eq 0) { [void]$lines.Add('(none)') } else { $script:ReportCleared | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
   [void]$lines.Add('')
-  [void]$lines.Add('--- Failed ---')
+  [void]$lines.Add('--- Failed this run ---')
   if ($script:ReportFailed.Count -eq 0) { [void]$lines.Add('(none)') } else { $script:ReportFailed | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
-  [void]$lines.Add('')
-  [void]$lines.Add('--- Kept ---')
-  if ($script:ReportKept.Count -eq 0) { [void]$lines.Add('(none)') } else { $script:ReportKept | Sort-Object | ForEach-Object { [void]$lines.Add($_) } }
   $text = ($lines -join [Environment]::NewLine)
   try { $text | Set-Content -Path (Join-Path $homeRoot 'Admin-Setup-last.txt') -Encoding UTF8 } catch {}
   $win = New-Object System.Windows.Forms.Form
-  $win.Text = 'Admin Setup - what ran'
-  $win.Size = New-Object System.Drawing.Size(720, 560)
+  $win.Text = 'Admin Setup - still installed'
+  $win.Size = New-Object System.Drawing.Size(760, 600)
   $win.StartPosition = 'CenterScreen'
   $win.TopMost = $true
   $box = New-Object System.Windows.Forms.TextBox
@@ -329,9 +309,9 @@ function Show-WipeReport {
 
 $doWipe = ($Mode -in @('All','Wipe')) -and -not $SkipWipe
 $doTray = ($Mode -in @('All','Wipe')) -and -not $SkipTray
-if ($Mode -eq 'Wipe' -and $SkipTray) { $doTray = $false }
 $win32 = 0; $store = 0
 if ($doWipe) { $win32 = Invoke-ClearWin32Apps; $store = Invoke-ClearStoreApps }
 if ($doTray) { Set-NoTaskbar }
-Write-Log "Finished Win32=$win32 Store=$store"
+Get-StillInstalled
+Write-Log "Finished Win32=$win32 Store=$store Left=$($script:ReportLeft.Count)"
 Show-WipeReport
