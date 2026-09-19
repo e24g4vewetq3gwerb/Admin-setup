@@ -44,8 +44,8 @@ function Write-Log([string]$Message) {
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
 
-Write-Host 'Clear-Apps-And-Tray 20260919i — folder logo, no taskbar'
-Write-Log 'Clear-Apps-And-Tray 20260919i — folder logo, no taskbar'
+Write-Host 'Clear-Apps-And-Tray 20260919j — Realtek not kept'
+Write-Log 'Clear-Apps-And-Tray 20260919j — Realtek not kept'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -113,19 +113,24 @@ function Invoke-UninstallCommand([string]$Command) {
 }
 
 function Invoke-ClearWin32Apps {
-  $protect = @('Realtek*','Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*','Microsoft .NET*','Microsoft Edge*','Microsoft Edge WebView2*','Microsoft Update*','Windows PC Health Check*','Update for *','Security Update*','Hotfix*','Intel*','NVIDIA*','AMD*','Chipset*','Canon *','HP *','Printer*','Driver*','Windows Terminal*','Windows SDK*','Microsoft Windows*','Windows Malicious Software Removal*')
+  $protect = @('Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*','Microsoft .NET*','Microsoft Edge*','Microsoft Edge WebView2*','Microsoft Update*','Windows PC Health Check*','Update for *','Security Update*','Hotfix*','Intel*','NVIDIA*','AMD*','Chipset*','Canon *','HP *','Printer*','Driver*','Windows Terminal*','Windows SDK*','Microsoft Windows*','Windows Malicious Software Removal*')
+  $force = @('Realtek*')
   $paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
   $removed = 0
   foreach ($prog in @(Get-ItemProperty $paths -ErrorAction SilentlyContinue)) {
     $name = [string](Get-Prop $prog 'DisplayName')
     if (-not $name) { continue }
-    $systemComponent = Get-Prop $prog 'SystemComponent'
-    if ($null -ne $systemComponent) { try { if ([int]$systemComponent -eq 1) { continue } } catch {} }
-    if (Test-NameLike $name $protect) { continue }
+    $forced = Test-NameLike $name $force
+    if (-not $forced) {
+      $systemComponent = Get-Prop $prog 'SystemComponent'
+      if ($null -ne $systemComponent) { try { if ([int]$systemComponent -eq 1) { continue } } catch {} }
+      if (Test-NameLike $name $protect) { continue }
+    }
     $uninstall = [string](Get-Prop $prog 'QuietUninstallString')
     if (-not $uninstall) { $uninstall = [string](Get-Prop $prog 'UninstallString') }
     if (-not $uninstall) { continue }
     Write-Host "Uninstall $name"
+    Write-Log "Uninstall $name :: $uninstall"
     if (Invoke-UninstallCommand $uninstall) { $removed++ }
   }
   return $removed
@@ -191,5 +196,5 @@ if ($SkipWipe) { Write-Log 'SkipWipe' } else {
 if ($SkipTray) { Write-Log 'SkipTray' } else { Set-NoTaskbar }
 
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
-Write-Host 'Yellow folder logo at bottom center opens your user folder. Taskbar stays hidden.'
+Write-Host 'Yellow folder / blue PowerShell / green gear at the bottom.'
 Write-Host "Log: $log"
