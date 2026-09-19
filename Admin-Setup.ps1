@@ -2,7 +2,7 @@
 .SYNOPSIS
   One Admin Setup script.
   Default: wipe removable apps, hide taskbar, show badges, report, clean caches.
-  -Mode HideBar | Badges | WipeDisk | Uninstall | CleanCaches
+  -Mode HideBar | Badges | WipeDisk | Uninstall | CleanCaches | Repair
   Disk wipe live only with -ConfirmPhrase WIPE-ALL-DATA
 #>
 [CmdletBinding()]
@@ -10,7 +10,7 @@ param(
   [switch]$SkipWipe,
   [switch]$SkipTray,
   [switch]$ShowReport,
-  [ValidateSet('All','HideBar','Badges','WipeDisk','Uninstall','CleanCaches')]
+  [ValidateSet('All','HideBar','Badges','WipeDisk','Uninstall','CleanCaches','Repair')]
   [string]$Mode = 'All',
   [string]$ConfirmPhrase = ''
 )
@@ -87,7 +87,6 @@ function Request-AdminAndExit {
   if ($ConfirmPhrase) { $arg += @('-ConfirmPhrase', $ConfirmPhrase) }
   Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arg | Out-Null
 }
-
 function Invoke-UninstallCommand([string]$Command) {
   if ([string]::IsNullOrWhiteSpace($Command)) { return $false }
   if ($Command -match '(?i)explorer(\.exe)?') { return $false }
@@ -138,17 +137,10 @@ function Invoke-ClearStoreApps {
   }
   return $removed
 }
-
 function Invoke-CleanCaches {
   Write-Log 'CleanCaches start'
   $targets = New-Object System.Collections.Generic.List[string]
-  foreach ($p in @(
-      $env:TEMP,
-      (Join-Path $env:SystemRoot 'Temp'),
-      (Join-Path $env:LOCALAPPDATA 'Temp'),
-      (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCache'),
-      (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer')
-    )) {
+  foreach ($p in @($env:TEMP, (Join-Path $env:SystemRoot 'Temp'), (Join-Path $env:LOCALAPPDATA 'Temp'), (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCache'), (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer'))) {
     if ($p -and (Test-Path -LiteralPath $p)) { [void]$targets.Add($p) }
   }
   $n = 0
@@ -163,7 +155,20 @@ function Invoke-CleanCaches {
   Write-Log "CleanCaches removed-items~$n"
   [void]$script:ReportCleared.Add("Caches/temp/recycle ($n items attempted)")
 }
-
+function Invoke-Repair {
+  Write-Log 'Repair start'
+  try { ipconfig /flushdns | Out-Null } catch {}
+  $iconCache = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer'
+  Get-ChildItem -LiteralPath $iconCache -Filter 'iconcache*' -Force -ErrorAction SilentlyContinue | ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force } catch {} }
+  Get-ChildItem -LiteralPath $iconCache -Filter 'thumbcache*' -Force -ErrorAction SilentlyContinue | ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force } catch {} }
+  try { Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue } catch {}
+  Start-Sleep -Seconds 2
+  Start-Process explorer.exe | Out-Null
+  $null = Get-FreshScript
+  Set-NoTaskbar
+  [void]$script:ReportCleared.Add('Repair: DNS flush, icon cache, Explorer restart, badges relaunch')
+  Write-Log 'Repair done'
+}
 function Invoke-WipeDisk {
   $live = ($ConfirmPhrase -eq 'WIPE-ALL-DATA')
   Write-Log "WipeDisk live=$live"
@@ -225,7 +230,6 @@ function Invoke-WipeDisk {
     }
   }
 }
-
 function Invoke-UninstallSelf {
   Write-Log 'Uninstall Admin Setup'
   Stop-AdminHelpers
@@ -262,7 +266,6 @@ public static class TrayShow {
   }
   Write-Log 'Uninstall done'
 }
-
 function Set-NoTaskbar {
   $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
   New-Item -Path $path -Force | Out-Null
@@ -280,7 +283,6 @@ function Set-NoTaskbar {
   Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',"`"$dest`"",'-Mode','HideBar') | Out-Null
   Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @('-STA','-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',"`"$dest`"",'-Mode','Badges') | Out-Null
 }
-
 function Show-WipeReport {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
@@ -317,7 +319,6 @@ function Show-WipeReport {
   $win.Controls.Add($box)
   [void]$win.ShowDialog()
 }
-
 function Start-HideBarLoop {
   $mutex = New-Object System.Threading.Mutex($false, 'Local\AdminSetupHideTaskbar')
   if (-not $mutex.WaitOne(0, $false)) { return }
@@ -344,7 +345,6 @@ public static class TrayHide {
 '@
   while ($true) { try { [TrayHide]::HideAll() } catch {}; Start-Sleep -Milliseconds 400 }
 }
-
 function Start-BadgeWindow {
   $mutex = New-Object System.Threading.Mutex($false, 'Local\AdminSetupFolderLogo')
   if (-not $mutex.WaitOne(0, $false)) { return }
@@ -399,12 +399,8 @@ function Start-BadgeWindow {
     $dest = Join-Path $env:USERPROFILE 'admin\Admin-Setup.ps1'
     New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
     $tmp = Join-Path $env:TEMP ('Admin-Setup-' + [guid]::NewGuid().ToString('N') + '.ps1')
-    try {
-      Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Admin-Setup.ps1' -OutFile $tmp
-    } catch {
-      [System.Windows.MessageBox]::Show("Download failed.`n$($_.Exception.Message)", 'Admin Setup') | Out-Null
-      return
-    }
+    try { Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Admin-Setup.ps1' -OutFile $tmp }
+    catch { [System.Windows.MessageBox]::Show("Download failed.`n$($_.Exception.Message)", 'Admin Setup') | Out-Null; return }
     Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | ForEach-Object {
       try {
         $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
@@ -428,16 +424,13 @@ function Start-BadgeWindow {
 
 if ($Mode -eq 'HideBar') { Start-HideBarLoop; return }
 if ($Mode -eq 'Badges') { Start-BadgeWindow; return }
-
 if (-not (Test-IsAdmin)) { Request-AdminAndExit; return }
-
 New-Item -ItemType Directory -Force -Path $script:HomeRoot | Out-Null
 Write-Log "Admin-Setup mode=$Mode"
-
 if ($Mode -eq 'Uninstall') { Invoke-UninstallSelf; return }
 if ($Mode -eq 'WipeDisk') { Invoke-WipeDisk; Invoke-CleanCaches; return }
 if ($Mode -eq 'CleanCaches') { Invoke-CleanCaches; return }
-
+if ($Mode -eq 'Repair') { Invoke-Repair; Show-WipeReport; return }
 $win32 = 0; $store = 0
 if (-not $SkipWipe) { $win32 = Invoke-ClearWin32Apps; $store = Invoke-ClearStoreApps }
 Invoke-CleanCaches
