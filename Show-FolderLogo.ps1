@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  HD circular launch badges: folder, PowerShell, wipe (with confirm).
+  Badges: folder, PowerShell, wipe, Chrome, Grok Bot.
 #>
 [CmdletBinding()]
 param()
@@ -27,20 +27,50 @@ function Convert-ToBitmapSource([System.Drawing.Image]$Img) {
   return $bmp
 }
 function Get-ExeImage([string]$Path) {
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
   try {
     $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path)
-    if (-not $ico) { return $null }
-    return Convert-ToBitmapSource $ico.ToBitmap()
-  } catch { return $null }
+    if ($ico) { return Convert-ToBitmapSource $ico.ToBitmap() }
+  } catch {}
+  return $null
+}
+function Find-Chrome {
+  @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+}
+function Find-Grok {
+  $names = @('Grok Bot.exe','GrokBot.exe','Grok.exe')
+  $roots = @(
+    "$env:LOCALAPPDATA\Programs",
+    "$env:LOCALAPPDATA",
+    $env:ProgramFiles,
+    ${env:ProgramFiles(x86)}
+  )
+  foreach ($root in $roots) {
+    if (-not $root -or -not (Test-Path $root)) { continue }
+    foreach ($n in $names) {
+      $hit = Get-ChildItem -LiteralPath $root -Filter $n -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($hit) { return $hit.FullName }
+    }
+  }
+  $lnk = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter '*Grok*.lnk' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($lnk) { return $lnk.FullName }
+  return $null
 }
 
-$folderImg = Get-ExeImage (Join-Path $env:SystemRoot 'explorer.exe')
-$psImg = Get-ExeImage (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
 $scriptPath = Join-Path $env:USERPROFILE 'admin\Clear-Apps-And-Tray.ps1'
 if (-not (Test-Path -LiteralPath $scriptPath)) {
   $alt = Join-Path (Split-Path -Parent $PSCommandPath) 'Clear-Apps-And-Tray.ps1'
   if (Test-Path -LiteralPath $alt) { $scriptPath = $alt }
 }
+
+$folderImg = Get-ExeImage (Join-Path $env:SystemRoot 'explorer.exe')
+$psImg = Get-ExeImage (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+$chromeImg = Get-ExeImage (Find-Chrome)
+$grokImg = Get-ExeImage (Find-Grok)
 
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -50,24 +80,33 @@ $xaml = @'
         ResizeMode="NoResize" SizeToContent="WidthAndHeight"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
   <StackPanel Orientation="Horizontal" Margin="8,8,8,10">
-    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnFolder" ToolTip="Open your folder">
+    <Grid Width="64" Height="64" Margin="0,0,16,0" Cursor="Hand" Name="BtnFolder" ToolTip="Folder">
       <Ellipse Fill="#FF2A2A2A" Stroke="#FFE6B422" StrokeThickness="2.2"/>
       <Image Name="ImgFolder" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
     </Grid>
-    <Grid Width="64" Height="64" Margin="0,0,18,0" Cursor="Hand" Name="BtnPs" ToolTip="Open PowerShell">
+    <Grid Width="64" Height="64" Margin="0,0,16,0" Cursor="Hand" Name="BtnPs" ToolTip="PowerShell">
       <Ellipse Fill="#FF172233" Stroke="#FF3B9AE1" StrokeThickness="2.2"/>
       <Image Name="ImgPs" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
     </Grid>
-    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnScript" ToolTip="Clear apps (asks first)">
+    <Grid Width="64" Height="64" Margin="0,0,16,0" Cursor="Hand" Name="BtnScript" ToolTip="Wipe (asks first)">
       <Ellipse Fill="#FF14301F" Stroke="#FF3DDC84" StrokeThickness="2.2"/>
-      <Viewbox Width="30" Height="30">
+      <Viewbox Width="26" Height="26">
         <Canvas Width="48" Height="48">
-          <Path Fill="#FF3DDC84" Data="M 10,16 L 38,16 L 36,42 L 12,42 Z"/>
-          <Path Fill="#FF0E1C14" Data="M 18,16 L 18,42 M 24,16 L 24,42 M 30,16 L 30,42" Stroke="#FF0E1C14" StrokeThickness="2"/>
-          <Path Fill="#FF3DDC84" Data="M 8,12 L 40,12 L 40,16 L 8,16 Z"/>
-          <Path Fill="#FF3DDC84" Data="M 18,6 L 30,6 L 32,12 L 16,12 Z"/>
+          <Path Fill="#FF3DDC84" Data="M 18,8 L 38,24 L 18,40 Z"/>
         </Canvas>
       </Viewbox>
+    </Grid>
+    <Grid Width="64" Height="64" Margin="0,0,16,0" Cursor="Hand" Name="BtnChrome" ToolTip="Chrome — open or install latest">
+      <Ellipse Fill="#FF2A1210" Stroke="#FFEA4335" StrokeThickness="2.2"/>
+      <Image Name="ImgChrome" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
+      <TextBlock Name="TxtChrome" Text="C" Foreground="#FFEA4335" FontSize="22" FontWeight="Bold"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Grid>
+    <Grid Width="64" Height="64" Cursor="Hand" Name="BtnGrok" ToolTip="Grok Bot — open or install latest">
+      <Ellipse Fill="#FF141414" Stroke="#FFE8E8E8" StrokeThickness="2.2"/>
+      <Image Name="ImgGrok" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
+      <TextBlock Name="TxtGrok" Text="G" Foreground="White" FontSize="22" FontWeight="Bold"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
     </Grid>
   </StackPanel>
 </Window>
@@ -76,6 +115,8 @@ $xaml = @'
 $window = [Windows.Markup.XamlReader]::Parse($xaml)
 $window.FindName('ImgFolder').Source = $folderImg
 $window.FindName('ImgPs').Source = $psImg
+if ($chromeImg) { $window.FindName('ImgChrome').Source = $chromeImg; $window.FindName('TxtChrome').Visibility = 'Collapsed' }
+if ($grokImg) { $window.FindName('ImgGrok').Source = $grokImg; $window.FindName('TxtGrok').Visibility = 'Collapsed' }
 
 function Move-ToBottom {
   $sw = [System.Windows.SystemParameters]::PrimaryScreenWidth
@@ -84,13 +125,64 @@ function Move-ToBottom {
   $window.Top = $sh - $window.ActualHeight - 16
 }
 
+function Install-LatestChrome {
+  $tmp = Join-Path $env:TEMP 'chrome_installer.exe'
+  Invoke-WebRequest -Uri 'https://dl.google.com/chrome/install/latest/chrome_installer.exe' -OutFile $tmp -UseBasicParsing
+  Start-Process -FilePath $tmp -ArgumentList '/silent','/install' -Wait
+}
+function Get-GrokDownloadUrl {
+  $arch = $env:PROCESSOR_ARCHITECTURE
+  if ($arch -eq 'ARM64') {
+    return 'https://api2.cursor.sh/updates/download/stable/win32-arm64/grok-bot'
+  }
+  return 'https://api2.cursor.sh/updates/download/stable/win32-x64/grok-bot-cf55d121b6d17368'
+}
+function Install-LatestGrok {
+  $tmp = Join-Path $env:TEMP 'GrokBotSetup.exe'
+  Invoke-WebRequest -Uri (Get-GrokDownloadUrl) -OutFile $tmp -UseBasicParsing
+  Start-Process -FilePath $tmp -Wait
+}
+
+function Start-ChromeFlow {
+  $exe = Find-Chrome
+  if ($exe) { Start-Process $exe | Out-Null; return }
+  $q = [System.Windows.MessageBox]::Show('Chrome is not installed. Download and install the latest official Chrome now?','Chrome','YesNo','Question','Yes')
+  if ($q -ne [System.Windows.MessageBoxResult]::Yes) { return }
+  try {
+    Install-LatestChrome
+    Start-Sleep 2
+    $exe = Find-Chrome
+    if ($exe) { Start-Process $exe | Out-Null }
+    else { [System.Windows.MessageBox]::Show('Chrome installer finished. Open Chrome from Start if it does not appear.','Chrome','OK','Information') | Out-Null }
+  } catch {
+    [System.Windows.MessageBox]::Show("Chrome install failed:`n$($_.Exception.Message)",'Chrome','OK','Error') | Out-Null
+    Start-Process 'https://www.google.com/chrome/' | Out-Null
+  }
+}
+function Start-GrokFlow {
+  $exe = Find-Grok
+  if ($exe) { Start-Process $exe | Out-Null; return }
+  $q = [System.Windows.MessageBox]::Show('Grok Bot is not installed. Download and install the latest official Windows build now?','Grok Bot','YesNo','Question','Yes')
+  if ($q -ne [System.Windows.MessageBoxResult]::Yes) { return }
+  try {
+    Install-LatestGrok
+    Start-Sleep 2
+    $exe = Find-Grok
+    if ($exe) { Start-Process $exe | Out-Null }
+    else { Start-Process 'https://x.ai/bot' | Out-Null }
+  } catch {
+    [System.Windows.MessageBox]::Show("Grok Bot install failed:`n$($_.Exception.Message)`nOpening the download page.",'Grok Bot','OK','Error') | Out-Null
+    Start-Process 'https://x.ai/bot' | Out-Null
+  }
+}
 function Confirm-AndRun {
   if (-not (Test-Path -LiteralPath $scriptPath)) {
-    [System.Windows.MessageBox]::Show("Script not found:`n$scriptPath", 'Admin Setup', 'OK', 'Warning') | Out-Null
+    [System.Windows.MessageBox]::Show("Script not found:`n$scriptPath",'Admin Setup','OK','Warning') | Out-Null
     return
   }
-  $msg = "Run Clear Apps and Tray again?`n`nThis will uninstall removable programs and keep the taskbar hidden.`nA report opens when it finishes.`n`nContinue?"
-  $answer = [System.Windows.MessageBox]::Show($msg, 'Confirm wipe', 'YesNo', 'Exclamation', 'No')
+  $answer = [System.Windows.MessageBox]::Show(
+    "Run Clear Apps and Tray again?`n`nThis uninstalls removable programs and keeps the taskbar hidden.",
+    'Confirm wipe','YesNo','Exclamation','No')
   if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
   $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   Start-Process -FilePath $ps -Verb RunAs -ArgumentList @(
@@ -105,6 +197,8 @@ $window.FindName('BtnPs').Add_MouseLeftButtonUp({
   Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') | Out-Null
 })
 $window.FindName('BtnScript').Add_MouseLeftButtonUp({ Confirm-AndRun })
+$window.FindName('BtnChrome').Add_MouseLeftButtonUp({ Start-ChromeFlow })
+$window.FindName('BtnGrok').Add_MouseLeftButtonUp({ Start-GrokFlow })
 
 $window.Add_ContentRendered({ Move-ToBottom })
 $timer = New-Object System.Windows.Threading.DispatcherTimer
