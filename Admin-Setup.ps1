@@ -357,10 +357,66 @@ if ($doWipe -or $doRestart) {
     return
   }
 }
+function Set-RegDword([string]$Path, [string]$Name, [int]$Value) {
+  New-Item -Path $Path -Force | Out-Null
+  New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType DWord -Force | Out-Null
+}
+function Set-MinimalTaskbar {
+  Write-Host 'Hiding taskbar tray / language / extra buttons...'
+  Write-Log 'Minimal taskbar'
+  $polUser = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+  $polMach = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+  foreach ($pol in @($polUser, $polMach)) {
+    Set-RegDword $pol 'NoTrayItemsDisplay' 1
+    Set-RegDword $pol 'HideClock' 1
+    Set-RegDword $pol 'HideSCAVolume' 1
+    Set-RegDword $pol 'HideSCANetwork' 1
+    Set-RegDword $pol 'HideSCAPower' 1
+    Set-RegDword $pol 'HideSCAHealth' 1
+    Set-RegDword $pol 'HideSCAMeetNow' 1
+    Set-RegDword $pol 'NoAutoTrayNotify' 1
+    Set-RegDword $pol 'HideLocaleBar' 1
+  }
+  $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+  Set-RegDword $adv 'ShowTaskViewButton' 0
+  Set-RegDword $adv 'TaskbarDa' 0
+  Set-RegDword $adv 'TaskbarMn' 0
+  Set-RegDword $adv 'ShowCopilotButton' 0
+  Set-RegDword $adv 'ShowTaskbarChat' 0
+  Set-RegDword $adv 'TaskbarAl' 0
+  Set-RegDword $adv 'SearchboxTaskbarMode' 0
+  Set-RegDword $adv 'ShowCortanaButton' 0
+  Set-RegDword 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 0
+  Set-RegDword 'HKCU:\Software\Microsoft\CTF\LangBar' 'ShowStatus' 3
+  Set-RegDword 'HKCU:\Software\Microsoft\CTF\LangBar' 'ExtraIconsOnMinimized' 0
+  Set-RegDword 'HKCU:\Software\Microsoft\CTF\MSUTB' 'ShowDeskBand' 0
+  Set-RegDword 'HKCU:\Software\Microsoft\TabletTip\1.7' 'TipbandDesiredVisibility' 0
+  Set-RegDword 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PenWorkspace' 'PenWorkspaceButtonDesiredVisibility' 0
+  Set-RegDword 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' 'EnableAutoTray' 1
+  try {
+    $langs = Get-WinUserLanguageList -ErrorAction Stop
+    if ($langs -and $langs.Count -gt 0) {
+      Set-WinUserLanguageList -LanguageList $langs[0] -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+  try {
+    $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+    if (Test-Path -LiteralPath $pinDir) {
+      Get-ChildItem -LiteralPath $pinDir -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband' -Recurse -Force -ErrorAction SilentlyContinue
+  } catch {}
+  try {
+    Get-ChildItem 'HKCU:\Control Panel\NotifyIconSettings' -ErrorAction SilentlyContinue | ForEach-Object {
+      Set-RegDword $_.PSPath 'IsPromoted' 0
+    }
+  } catch {}
+}
 if ($doWipe) {
   Invoke-ClearApps | Out-Null
   Write-Log 'App clear finished'
 }
+if ($doWipe -or $doRestart) { Set-MinimalTaskbar }
 Write-Host "Log: $log"
 if ($doRestart) {
   Write-Host 'Restarting in 60 seconds. Cancel with: shutdown /a'
