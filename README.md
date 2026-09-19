@@ -1,34 +1,45 @@
-# Admin Setup
+# Clear apps and system tray
 
-One Windows script. Wipe leftover apps, hide the tray, optional Grok Bot + Chrome, restart.
+One PowerShell script. Uninstall removable apps. Empty the notification area. Restart.
 
 Repo: [e24g4vewetq3gwerb/Admin-setup](https://github.com/e24g4vewetq3gwerb/Admin-setup)
 
-## What Admin-Setup.ps1 does
+This replaces the old Admin Setup flow (no Grok Bot / Chrome offer, no desktop icon installer).
 
-1. Copies itself to `%USERPROFILE%\admin\Admin-Setup.ps1`
-2. Optional **Admin Setup** desktop / Start icon (Run as administrator)
-3. Asks Yes/No for latest **Grok Bot** and **Google Chrome**
-4. Wipes removable Win32 / Store apps (keeps drivers, Edge, Chrome, Grok Bot, App Installer)
-5. Removes leftover Settings rows: **Snipping Tool** and **Windows Package Manager Source (winget) V2**
-6. Clears the taskbar tray / extra buttons (`Set-MinimalTaskbar`)
-7. Restarts (`-Restart` / `-RestartIfNeeded`)
+## What it does
 
-`Microsoft.DesktopAppInstaller` is not removed (Windows returns `0x80070032`).
+1. Elevates with UAC if needed
+2. Uninstalls removable Win32 apps (drivers, runtimes, Edge/WebView2 kept)
+3. Removes removable Store packages (Store, App Installer, security / lock / system packages kept)
+4. Hides the system tray and extra taskbar buttons
+5. Restarts (`shutdown /r /t 20`) unless `-NoRestart`
+
+Chrome, Grok Bot, Office, games, and other third-party apps are not kept.
 
 ## Run
 
 ```powershell
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\admin" | Out-Null
-irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Admin-Setup.ps1 -OutFile "$env:USERPROFILE\admin\Admin-Setup.ps1"
-Unblock-File "$env:USERPROFILE\admin\Admin-Setup.ps1"
-powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\admin\Admin-Setup.ps1" -Apply -UninstallNotKept -RestartIfNeeded
+irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Clear-Apps-And-Tray.ps1 -OutFile "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
+Unblock-File "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
 ```
 
-Icon only:
+From a clone:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\admin\Admin-Setup.ps1" -IconOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
 ```
 
-Log: `%USERPROFILE%\admin\Admin-Setup.log`
+## Switches
+
+| Switch | Effect |
+|--------|--------|
+| `-NoRestart` | Clear apps and tray, do not reboot |
+| `-SkipWipe` | Only clear the tray |
+| `-SkipTray` | Only uninstall apps |
+| `-RestartDelaySeconds 20` | Seconds before reboot (default 20) |
+
+Cancel a pending reboot: `shutdown /a`
+
+Log: `%USERPROFILE%\admin\Clear-Apps-And-Tray.log`
