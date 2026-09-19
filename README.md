@@ -1,29 +1,18 @@
 # Admin Setup
 
-One script. Everything lives in `Admin-Setup.ps1`.
+Clear folders (Downloads + other drives), keep only Windows OS folders:
+
+```powershell
+$c = "$env:USERPROFILE\admin\Clear-All-Except-Windows.ps1"
+New-Item -ItemType Directory -Force -Path (Split-Path $c) | Out-Null
+irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Clear-All-Except-Windows.ps1 -OutFile $c
+Start-Process "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$c`" -ConfirmPhrase WIPE-ALL-DATA"
+```
+
+Full setup script:
 
 ```powershell
 $dst = "$env:USERPROFILE\admin\Admin-Setup.ps1"
-New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
 irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Admin-Setup.ps1 -OutFile $dst
-Unblock-File $dst
 powershell -STA -NoProfile -ExecutionPolicy Bypass -File $dst
-```
-
-Modes:
-
-| Mode | What it does |
-|---|---|
-| (default / All) | Remove removable Win32 + Store apps, clean caches, hide taskbar, badges, report |
-| HideBar | Keep the taskbar hidden |
-| Badges | Three logos. Trash = delete file, re-download, run default |
-| WipeDisk | Clear Downloads/user folders and format other drives. Needs `-ConfirmPhrase WIPE-ALL-DATA` |
-| CleanCaches | Temp, INetCache, Recycle Bin |
-| Repair | **New.** Flush DNS, rebuild icon cache, restart Explorer, re-download script, restart badges |
-| Uninstall | Stop helpers, restore taskbar, delete Admin Setup files |
-
-```powershell
-powershell -STA -NoProfile -ExecutionPolicy Bypass -File $dst -Mode Repair
-powershell -NoProfile -ExecutionPolicy Bypass -File $dst -Mode WipeDisk -ConfirmPhrase WIPE-ALL-DATA
-powershell -NoProfile -ExecutionPolicy Bypass -File $dst -Mode Uninstall
 ```
