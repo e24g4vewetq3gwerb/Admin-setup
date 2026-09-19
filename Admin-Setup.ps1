@@ -40,6 +40,13 @@ function Test-NameLike([string]$Name, [string[]]$Patterns) {
   foreach ($pattern in $Patterns) { if ($Name -like $pattern) { return $true } }
   return $false
 }
+function Test-KeepEssential([string]$Name) {
+  return (Test-NameLike $Name @(
+    'Windows Terminal*','Microsoft.WindowsTerminal*','*WindowsTerminal*',
+    '*FileExp*','*File Explorer*','*Explorer++*',
+    'Microsoft Windows Explorer*'
+  ))
+}
 
 if ($Mode -eq 'HideBar') {
   $mutex = New-Object System.Threading.Mutex($false, 'Local\AdminSetupHideTaskbar')
@@ -142,7 +149,7 @@ if ($Mode -eq 'Badges') {
       return
     }
     $answer = [System.Windows.MessageBox]::Show(
-      "Run Clear Apps and Tray again?`n`nThis will uninstall removable programs and keep the taskbar hidden.`nA report opens when it finishes.`n`nContinue?",
+      "Run Clear Apps and Tray again?`n`nThis will uninstall everything except Terminal and File Explorer.`nA report opens when it finishes.`n`nContinue?",
       'Confirm wipe', 'YesNo', 'Exclamation', 'No')
     if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { return }
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -177,7 +184,7 @@ function Write-Log([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message
   try { $line | Tee-Object -FilePath $log -Append } catch { Write-Host $line }
 }
-Write-Log 'Admin-Setup 20260919 strip Photos DevHome Widgets'
+Write-Log 'Admin-Setup 20260919 keep Terminal+Explorer only'
 
 if (-not (Test-IsAdmin)) {
   $self = Get-SelfPath
@@ -230,41 +237,40 @@ function Invoke-UninstallCommand([string]$Command) {
   } catch { return $false }
 }
 function Invoke-ClearWin32Apps {
-  $protect = @('Microsoft Visual C++*','Microsoft Visual Studio* Redistributable*','Microsoft .NET*','Microsoft Edge*','Microsoft Edge WebView2*','Microsoft Update*','Windows PC Health Check*','Update for *','Security Update*','Hotfix*','Intel*','NVIDIA*','AMD*','Chipset*','Canon *','HP *','Printer*','Driver*','Windows Terminal*','Windows SDK*','Microsoft Windows*','Windows Malicious Software Removal*')
-  $force = @('Realtek*')
   $paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')
   $removed = 0
   foreach ($prog in @(Get-ItemProperty $paths -ErrorAction SilentlyContinue)) {
     $name = [string](Get-Prop $prog 'DisplayName')
     if (-not $name) { continue }
     $script:ReportFound++
-    $forced = Test-NameLike $name $force
-    if (-not $forced) {
-      $systemComponent = Get-Prop $prog 'SystemComponent'
-      if ($null -ne $systemComponent) { try { if ([int]$systemComponent -eq 1) { [void]$script:ReportKept.Add("system  $name"); continue } } catch {} }
-      if (Test-NameLike $name $protect) { [void]$script:ReportKept.Add("keep    $name"); continue }
-    }
+    if (Test-KeepEssential $name) { [void]$script:ReportKept.Add("keep  $name"); continue }
     $uninstall = [string](Get-Prop $prog 'QuietUninstallString')
     if (-not $uninstall) { $uninstall = [string](Get-Prop $prog 'UninstallString') }
-    if (-not $uninstall) { [void]$script:ReportKept.Add("no-uninstaller  $name"); continue }
+    if (-not $uninstall) { [void]$script:ReportFailed.Add("no-uninstaller  $name"); continue }
     if (Invoke-UninstallCommand $uninstall) { $removed++; [void]$script:ReportCleared.Add($name) } else { [void]$script:ReportFailed.Add($name) }
   }
   return $removed
 }
+function Remove-OneStore([string]$FullName) {
+  $ok = $false
+  try { Remove-AppxPackage -Package $FullName -AllUsers -ErrorAction Stop; $ok = $true } catch {}
+  if (-not $ok) { try { Remove-AppxPackage -Package $FullName -ErrorAction Stop; $ok = $true } catch {} }
+  if (-not $ok) {
+    try { Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.PackageName -eq $FullName -or $_.DisplayName -eq $FullName } | ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue } } catch {}
+    try { Remove-AppxPackage -Package $FullName -AllUsers -ErrorAction Stop; $ok = $true } catch {}
+  }
+  return $ok
+}
 function Invoke-ClearStoreApps {
-  $forceRemove = @('Microsoft.Windows.Photos*','Microsoft.Windows.DevHome*','MicrosoftWindows.Client.WebExperience*')
-  $keepAppx = @('Microsoft.WindowsStore','Microsoft.StorePurchaseApp','Microsoft.WindowsTerminal','MicrosoftWindows.Client*','Microsoft.UI.*','Microsoft.VCLibs*','Microsoft.Services.Store*','windows.immersivecontrolpanel','Microsoft.DesktopAppInstaller','Microsoft.SecHealthUI','Microsoft.MicrosoftEdge*','Microsoft.ECApp','Microsoft.LockApp','Microsoft.AAD.BrokerPlugin','Microsoft.AccountsControl','Microsoft.BioEnrollment','Microsoft.CredDialogHost','Microsoft.Win32WebViewHost','Microsoft.XboxGameCallableUI','Microsoft.PPIProjection')
   $removed = 0
   try {
     foreach ($pkg in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)) {
       $name = [string]$pkg.Name
       if (-not $name) { continue }
       $script:ReportFound++
-      $forceIt = Test-NameLike $name $forceRemove
-      if (-not $forceIt -and ($pkg.IsFramework -or $pkg.NonRemovable)) { [void]$script:ReportKept.Add("store-system  $name"); continue }
-      if (-not $forceIt -and (Test-NameLike $name $keepAppx)) { [void]$script:ReportKept.Add("store-keep  $name"); continue }
-      try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue; $removed++; [void]$script:ReportCleared.Add("Store: $name") }
-      catch { try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue; $removed++; [void]$script:ReportCleared.Add("Store: $name") } catch { [void]$script:ReportFailed.Add("Store: $name") } }
+      if (Test-KeepEssential $name) { [void]$script:ReportKept.Add("keep  $name"); continue }
+      if (Remove-OneStore $pkg.PackageFullName) { $removed++; [void]$script:ReportCleared.Add("Store: $name") }
+      else { [void]$script:ReportFailed.Add("Store: $name") }
     }
   } catch {}
   return $removed
