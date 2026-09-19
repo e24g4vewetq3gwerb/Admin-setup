@@ -10,22 +10,17 @@
   Protects drivers, runtimes, Edge/WebView2, and non-removable system
   packages so the machine can still boot. Does not install anything.
   Does not keep Chrome, Grok Bot, or other third-party apps.
+  Does not restart the computer.
 
   Windows UAC still appears if this process is not elevated.
 
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
-
-.EXAMPLE
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1 -Restart
 #>
 [CmdletBinding()]
 param(
-  [switch]$Restart,
-  [switch]$NoRestart,
   [switch]$SkipWipe,
-  [switch]$SkipTray,
-  [int]$DelaySeconds = 20
+  [switch]$SkipTray
 )
 Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
@@ -84,11 +79,8 @@ if (-not (Test-IsAdmin)) {
     '-ExecutionPolicy', 'Bypass',
     '-File', "`"$self`""
   )
-  if ($Restart) { $arg += '-Restart' }
-  if ($NoRestart) { $arg += '-NoRestart' }
   if ($SkipWipe) { $arg += '-SkipWipe' }
   if ($SkipTray) { $arg += '-SkipTray' }
-  $arg += @('-DelaySeconds', "$DelaySeconds")
   Write-Log 'Not elevated. Relaunching with RunAs.'
   Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arg | Out-Null
   return
@@ -320,13 +312,3 @@ if ($SkipTray) {
 Write-Log "Finished. Win32 attempts=$win32 Store attempts=$store"
 Write-Host "Done. Win32 uninstalls: $win32  Store removals: $store"
 Write-Host "Log: $log"
-
-if ($NoRestart -or -not $Restart) {
-  Write-Log 'No restart (default). Pass -Restart to reboot.'
-  return
-}
-
-$delay = [Math]::Max(0, [int]$DelaySeconds)
-Write-Host "Restarting in $delay seconds. Cancel with: shutdown /a"
-Write-Log "Restart scheduled in $delay seconds"
-shutdown.exe /r /t $delay /f /c 'Clear-Apps-And-Tray finished.'
