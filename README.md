@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Clear-Apps-And-Tray.ps1
 | `-NoRestart` | Same as default (no reboot). Kept so existing commands still work |
 | `-SkipWipe` | Only clear the tray |
 | `-SkipTray` | Only uninstall apps |
-| `-RestartDelaySeconds 20` | Seconds before reboot when `-Restart` is set (default 20) |
+| `-DelaySeconds 20` | Seconds before reboot when `-Restart` is set (default 20) |
 
 Cancel a pending reboot: `shutdown /a`
 

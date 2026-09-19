@@ -25,7 +25,7 @@ param(
   [switch]$NoRestart,
   [switch]$SkipWipe,
   [switch]$SkipTray,
-  [int]$RestartDelaySeconds = 20
+  [int]$DelaySeconds = 20
 )
 Set-StrictMode -Version 1
 $ErrorActionPreference = 'Continue'
@@ -88,7 +88,7 @@ if (-not (Test-IsAdmin)) {
   if ($NoRestart) { $arg += '-NoRestart' }
   if ($SkipWipe) { $arg += '-SkipWipe' }
   if ($SkipTray) { $arg += '-SkipTray' }
-  $arg += @('-RestartDelaySeconds', "$RestartDelaySeconds")
+  $arg += @('-DelaySeconds', "$DelaySeconds")
   Write-Log 'Not elevated. Relaunching with RunAs.'
   Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arg | Out-Null
   return
@@ -326,7 +326,7 @@ if ($NoRestart -or -not $Restart) {
   return
 }
 
-$delay = [Math]::Max(0, [int]$RestartDelaySeconds)
+$delay = [Math]::Max(0, [int]$DelaySeconds)
 Write-Host "Restarting in $delay seconds. Cancel with: shutdown /a"
 Write-Log "Restart scheduled in $delay seconds"
 shutdown.exe /r /t $delay /f /c 'Clear-Apps-And-Tray finished.'
