@@ -105,6 +105,47 @@ Set-RegDword $adv 'TaskbarAl' $alignWant $alignLabel
 Set-RegDword $search 'SearchboxTaskbarMode' 0 'Search box hidden'
 Set-RegDword $feeds 'ShellFeedsTaskbarViewMode' 2 'News and interests hidden'
 
+# --- Weather / Widgets (Win11 temperature chip on taskbar) ---
+$feedsPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'
+$dshPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'
+if ($Audit) {
+  $td = Get-RegInt $adv 'TaskbarDa'
+  $ff = Get-RegInt $feeds 'ShellFeedsTaskbarViewMode'
+  $an = Get-RegInt $dshPol 'AllowNewsAndInterests'
+  $ef = Get-RegInt $feedsPol 'EnableFeeds'
+  Add-R 'Widgets/weather TaskbarDa' $(if ($td -eq 0) { 'OK' } else { 'NEED' }) "current=$td want=0"
+  Add-R 'Feeds ShellFeedsTaskbarViewMode' $(if ($ff -eq 2) { 'OK' } else { 'NEED' }) "current=$ff want=2"
+  Add-R 'Policy AllowNewsAndInterests' $(if ($an -eq 0) { 'OK' } else { 'NEED' }) "current=$an want=0"
+  Add-R 'Policy EnableFeeds' $(if ($ef -eq 0) { 'OK' } else { 'NEED' }) "current=$ef want=0"
+} else {
+  if (-not (Test-Path $adv)) { New-Item -Path $adv -Force | Out-Null }
+  if (-not (Test-Path $feeds)) { New-Item -Path $feeds -Force | Out-Null }
+  New-ItemProperty -Path $adv -Name 'TaskbarDa' -PropertyType DWord -Value 0 -Force | Out-Null
+  New-ItemProperty -Path $feeds -Name 'ShellFeedsTaskbarViewMode' -PropertyType DWord -Value 2 -Force | Out-Null
+  try {
+    New-Item -Path $dshPol -Force | Out-Null
+    New-ItemProperty -Path $dshPol -Name 'AllowNewsAndInterests' -PropertyType DWord -Value 0 -Force | Out-Null
+    Add-R 'Policy AllowNewsAndInterests' 'FIXED' '0'
+  } catch { Add-R 'Policy AllowNewsAndInterests' 'NEED' $_.Exception.Message }
+  try {
+    New-Item -Path $feedsPol -Force | Out-Null
+    New-ItemProperty -Path $feedsPol -Name 'EnableFeeds' -PropertyType DWord -Value 0 -Force | Out-Null
+    Add-R 'Policy EnableFeeds' 'FIXED' '0'
+  } catch { Add-R 'Policy EnableFeeds' 'NEED' $_.Exception.Message }
+  foreach ($pat in @('MicrosoftWindows.Client.WebExperience','Microsoft.WidgetsPlatformRuntime')) {
+    foreach ($pkg in @(Get-AppxPackage -Name $pat -ErrorAction SilentlyContinue)) {
+      try {
+        Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
+        Add-R ("AppX " + $pkg.Name) 'FIXED' 'removed (weather/widgets host)'
+      } catch {
+        Add-R ("AppX " + $pkg.Name) 'NEED' $_.Exception.Message
+      }
+    }
+  }
+  $td2 = Get-RegInt $adv 'TaskbarDa'
+  Add-R 'Widgets/weather TaskbarDa' $(if ($td2 -eq 0) { 'FIXED' } else { 'NEED' }) ("set verify=" + $td2)
+}
+
 # Keep the chevron: clear NoTrayItemsDisplay if present
 $noTray = Get-RegInt $pol 'NoTrayItemsDisplay'
 if ($Audit) {
@@ -138,15 +179,6 @@ if (Test-Path $nis) {
   Add-R 'NotifyIconSettings' 'OK' 'key missing (nothing to hide)'
 }
 
-if (-not $Audit) {
-  try {
-    New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' -Force | Out-Null
-    New-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' -Name 'AllowNewsAndInterests' -PropertyType DWord -Value 0 -Force | Out-Null
-    Add-R 'Dsh AllowNewsAndInterests' 'FIXED' '0'
-  } catch {
-    Add-R 'Dsh AllowNewsAndInterests' 'NEED' $_.Exception.Message
-  }
-}
 
 $pinDir = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
 $dockNames = @('Google Chrome.lnk', 'Cursor.lnk', 'Grok Bot.lnk')
