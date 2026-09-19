@@ -138,20 +138,58 @@ function Try-Winget([string]$Id) {
   & winget install -e --id $Id --accept-package-agreements --accept-source-agreements --disable-interactivity
   return ($LASTEXITCODE -eq 0)
 }
+function Test-ChromeInstalled {
+  $paths = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+  )
+  foreach ($p in $paths) { if (Test-Path $p) { return $true } }
+  return $false
+}
 function Install-LatestChrome {
-  if (Try-Winget 'Google.Chrome') { L 'CHROME winget ok'; return }
   $ProgressPreference = 'SilentlyContinue'
+  try {
+    if (Try-Winget 'Google.Chrome') {
+      if (Test-ChromeInstalled) { L 'CHROME winget ok'; return }
+      L 'CHROME winget reported ok but exe missing; falling through'
+    }
+  } catch { L "CHROME winget error: $_" }
+
+  $temp = $env:TEMP
+  if (-not $temp) { $temp = $env:TMP }
+  if (-not $temp) { $temp = Join-Path $env:USERPROFILE 'Downloads' }
+  New-Item -ItemType Directory -Force -Path $temp | Out-Null
+  $exe = Join-Path $temp 'chrome_installer.exe'
+  L "CHROME fetch consumer installer to $exe"
+  try {
+    Invoke-WebRequest -Uri 'https://dl.google.com/chrome/install/latest/chrome_installer.exe' -OutFile $exe -UseBasicParsing
+    if (-not (Test-Path $exe) -or ((Get-Item $exe).Length -lt 10000)) {
+      throw "download missing or too small: $exe"
+    }
+    L 'CHROME download ok; starting installer'
+    Start-Process -FilePath $exe -Wait
+    if (Test-ChromeInstalled) { L 'CHROME installer ok'; return }
+    L 'CHROME installer ran but exe not found yet'
+  } catch {
+    L "CHROME consumer installer failed: $_"
+  }
+
   $dir = Join-Path $env:USERPROFILE 'Downloads'
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $msi = Join-Path $dir 'Chrome64.msi'
   L 'CHROME fetch standalone enterprise 64'
-  Invoke-WebRequest 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' -OutFile $msi -UseBasicParsing
-  Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait
-  L 'CHROME msi done'
+  try {
+    Invoke-WebRequest 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' -OutFile $msi -UseBasicParsing
+    Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait
+    L 'CHROME msi done'
+  } catch {
+    L "CHROME msi failed: $_"
+  }
 }
 function Install-GrokBot {
   if (Try-Winget 'xAI.GrokBuild') { L 'GROK winget ok' } else { L 'GROK winget miss; open grok.com' }
-  $chrome = @( 
+  $chrome = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
     "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
     "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
