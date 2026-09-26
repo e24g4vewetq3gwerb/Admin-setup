@@ -2,7 +2,7 @@
 .SYNOPSIS
   Wipe other drives, then C: (keep Windows), delete C:\Users, Recycle last.
   Before reboot: info alert explaining the wipe only (no download ask).
-  After restart (once): offer Developers Preference (Chrome, Grok Bot, Snipping Tool).
+  After restart (once): offer Developers Preference (Chrome, Grok Bot, Git, Snipping Tool).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Mode Wipe -ConfirmPhrase WIPE-ALL-DATA
@@ -113,7 +113,7 @@ function Show-WipeExplainer {
     ("Wipe finished." + [Environment]::NewLine + [Environment]::NewLine +
      "This PC removed removable files and apps (Windows itself was kept)." + [Environment]::NewLine + [Environment]::NewLine +
      "The computer will restart now." + [Environment]::NewLine +
-     "After you sign in, you will be asked once whether to install the Developers Preference package (Chrome, Grok Bot, Snipping Tool)."),
+     "After you sign in, you will be asked once whether to install the Developers Preference package (Chrome, Grok Bot, Git, Snipping Tool)."),
     'Admin Setup — wipe complete',
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information
@@ -173,6 +173,57 @@ function Install-GrokBot {
     Start-Process 'https://cursor.com/download/bot'
   }
 }
+function Refresh-Path {
+  $machine = [Environment]::GetEnvironmentVariable('Path','Machine')
+  $user = [Environment]::GetEnvironmentVariable('Path','User')
+  $env:Path = "$machine;$user"
+}
+function Install-Git2026 {
+  Refresh-Path
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    if (-not (Try-Winget 'Git.Git')) { L 'GIT winget miss'; return }
+    Refresh-Path
+  }
+  $git = 'C:\Program Files\Git\cmd\git.exe'
+  if (-not (Test-Path -LiteralPath $git)) {
+    $cmd = Get-Command git -ErrorAction SilentlyContinue
+    if ($cmd) { $git = $cmd.Source } else { L 'GIT binary miss'; return }
+  }
+  # 2026 defaults. SHA-256 is not set: GitHub still stores SHA-1, and a SHA-256 init cannot push there.
+  $pairs = @(
+    @('init.defaultBranch','main'),
+    @('core.autocrlf','input'),
+    @('core.longpaths','true'),
+    @('core.fsmonitor','true'),
+    @('core.untrackedCache','true'),
+    @('fetch.prune','true'),
+    @('fetch.pruneTags','true'),
+    @('pull.rebase','true'),
+    @('rebase.autoStash','true'),
+    @('rebase.updateRefs','true'),
+    @('push.default','simple'),
+    @('push.autoSetupRemote','true'),
+    @('merge.conflictstyle','zdiff3'),
+    @('diff.algorithm','histogram'),
+    @('diff.colorMoved','plain'),
+    @('diff.mnemonicPrefix','true'),
+    @('rerere.enabled','true'),
+    @('rerere.autoUpdate','true'),
+    @('column.ui','auto'),
+    @('branch.sort','-committerdate'),
+    @('tag.sort','-version:refname'),
+    @('commit.verbose','true'),
+    @('credential.helper','manager'),
+    @('help.autocorrect','prompt')
+  )
+  $admin = Test-Admin
+  foreach ($pair in $pairs) {
+    & $git config --global $pair[0] $pair[1]
+    if ($LASTEXITCODE -ne 0) { L "GIT skip $($pair[0])"; continue }
+    if ($admin) { & $git config --system $pair[0] $pair[1] | Out-Null }
+  }
+  L "GIT $( & $git --version )"
+}
 function Install-SnippingTool {
   if (Try-Winget '9MZ95KL8MR0L') { L 'SNIP winget ok' } else { L 'SNIP winget miss' }
   foreach ($exe in @(
@@ -194,7 +245,7 @@ function Offer-DevPref {
     Add-Type -AssemblyName System.Windows.Forms
     $r = [System.Windows.Forms.MessageBox]::Show(
       ('Install Developers Preference package?' + [Environment]::NewLine + [Environment]::NewLine +
-       'Latest Chrome, Grok Bot, and Snipping Tool.'),
+       'Latest Chrome, Grok Bot, Git, and Snipping Tool.'),
       'Developers Preference',
       [System.Windows.Forms.MessageBoxButtons]::YesNo,
       [System.Windows.Forms.MessageBoxIcon]::Question
@@ -203,6 +254,7 @@ function Offer-DevPref {
     L 'DEVPREF yes'
     Install-LatestChrome
     Install-GrokBot
+    Install-Git2026
     Install-SnippingTool
     L 'DEVPREF done'
   } finally {
