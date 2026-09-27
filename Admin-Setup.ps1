@@ -1,8 +1,6 @@
 <#
 .SYNOPSIS
-  Wipe other drives, then C: (keep Windows), delete C:\Users, Recycle last.
-  Before reboot: info alert explaining the wipe only (no download ask).
-  After restart (once): offer Developers Preference (Chrome, Grok Bot, Git, Snipping Tool).
+  Wipe other drives, then C: (keep Windows and Program Files). Then download Developers Preference.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\Admin-Setup.ps1 -Mode Wipe -ConfirmPhrase WIPE-ALL-DATA
@@ -35,7 +33,7 @@ function L([string]$m) {
 }
 function Is-Blocked([string]$Name) {
   $n = "$Name".ToLowerInvariant()
-  return @('system volume information','$recycle.bin','pagefile.sys','hiberfil.sys','swapfile.sys','windows','boot','bootmgr','recovery','$winreagent','programdata') -contains $n
+  return @('system volume information','$recycle.bin','pagefile.sys','hiberfil.sys','swapfile.sys','windows','boot','bootmgr','recovery','$winreagent','programdata','program files','program files (x86)') -contains $n
 }
 function Show-Bar {
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -111,20 +109,24 @@ function Show-WipeExplainer {
   Add-Type -AssemblyName System.Windows.Forms
   [void][System.Windows.Forms.MessageBox]::Show(
     ("Wipe finished." + [Environment]::NewLine + [Environment]::NewLine +
-     "This PC removed removable files and apps (Windows itself was kept)." + [Environment]::NewLine + [Environment]::NewLine +
-     "The computer will restart now." + [Environment]::NewLine +
-     "After you sign in, you will be asked once whether to install the Developers Preference package (Chrome, Grok Bot, Git, Snipping Tool)."),
+     "Drive C: has been wiped (Windows and Program Files were kept)." + [Environment]::NewLine +
+     "The developer package downloads next." + [Environment]::NewLine +
+     "The computer will restart when that finishes."),
     'Admin Setup — wipe complete',
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information
   )
   L 'Showed wipe explainer (no download ask)'
 }
-function Try-Winget([string]$Id) {
+function Try-Winget([string]$Id, [string]$Scope) {
   $winget = Get-Command winget -ErrorAction SilentlyContinue
   if (-not $winget) { return $false }
   L "WINGET $Id"
-  & winget install -e --id $Id --accept-package-agreements --accept-source-agreements --disable-interactivity
+  if ($Scope) {
+    & winget install -e --id $Id --scope $Scope --accept-package-agreements --accept-source-agreements --disable-interactivity
+  } else {
+    & winget install -e --id $Id --accept-package-agreements --accept-source-agreements --disable-interactivity
+  }
   return ($LASTEXITCODE -eq 0)
 }
 function Test-ChromeInstalled {
@@ -138,7 +140,7 @@ function Test-ChromeInstalled {
 function Install-LatestChrome {
   $ProgressPreference = 'SilentlyContinue'
   try {
-    if ((Try-Winget 'Google.Chrome') -and (Test-ChromeInstalled)) { L 'CHROME winget ok'; return }
+    if ((Try-Winget 'Google.Chrome' 'machine') -and (Test-ChromeInstalled)) { L 'CHROME winget ok'; return }
   } catch { L "CHROME winget: $_" }
   $temp = $env:TEMP; if (-not $temp) { $temp = Join-Path $env:USERPROFILE 'Downloads' }
   New-Item -ItemType Directory -Force -Path $temp | Out-Null
@@ -181,7 +183,7 @@ function Refresh-Path {
 function Install-Git2026 {
   Refresh-Path
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    if (-not (Try-Winget 'Git.Git')) { L 'GIT winget miss'; return }
+    if (-not (Try-Winget 'Git.Git' 'machine')) { L 'GIT winget miss'; return }
     Refresh-Path
   }
   $git = 'C:\Program Files\Git\cmd\git.exe'
@@ -234,47 +236,20 @@ function Install-SnippingTool {
   }
   try { Start-Process 'ms-screenclip:' } catch {}
 }
-function Offer-DevPref {
-  # Single-flight: prevent two RunOnce / two windows
-  $m = New-Object System.Threading.Mutex($false, 'Global\AdminSetupDevPrefOffer')
-  if (-not $m.WaitOne(0, $false)) {
-    L 'DEVPREF already running — skip duplicate window'
-    return
-  }
-  try {
-    Add-Type -AssemblyName System.Windows.Forms
-    $r = [System.Windows.Forms.MessageBox]::Show(
-      ('Install Developers Preference package?' + [Environment]::NewLine + [Environment]::NewLine +
-       'Latest Chrome, Grok Bot, Git, and Snipping Tool.'),
-      'Developers Preference',
-      [System.Windows.Forms.MessageBoxButtons]::YesNo,
-      [System.Windows.Forms.MessageBoxIcon]::Question
-    )
-    if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { L 'DEVPREF declined'; return }
-    L 'DEVPREF yes'
-    Install-LatestChrome
-    Install-GrokBot
-    Install-Git2026
-    Install-SnippingTool
-    L 'DEVPREF done'
-  } finally {
-    $m.ReleaseMutex() | Out-Null
-    $m.Dispose()
-  }
+function Use-SurvivingTemp {
+  $t = Join-Path $script:AdminDir 'tmp'
+  New-Item -ItemType Directory -Force -Path $t | Out-Null
+  $env:TEMP = $t
+  $env:TMP = $t
 }
-function Register-OfferAfterRestart {
-  $self = Join-Path $script:AdminDir 'Admin-Setup.ps1'
-  # ONE RunOnce only (HKLM) — HKCU+HKLM caused two windows
-  $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$self`" -Mode Offer"
-  $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
-  New-Item -Path $key -Force -EA SilentlyContinue | Out-Null
-  # Clear any old duplicate names
-  foreach ($n in @('AdminSetupDevPrefOffer','AdminSetupOfferGrokChrome','AdminSetupOfferGrokBot')) {
-    Remove-ItemProperty -Path $key -Name $n -EA SilentlyContinue
-    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name $n -EA SilentlyContinue
-  }
-  New-ItemProperty -Path $key -Name 'AdminSetupDevPrefOffer' -PropertyType String -Value $cmd -Force | Out-Null
-  L 'Registered single HKLM RunOnce for Offer after restart'
+function Install-DevPref {
+  Use-SurvivingTemp
+  L 'DEVPREF download after C: wipe'
+  Install-LatestChrome
+  Install-GrokBot
+  Install-Git2026
+  Install-SnippingTool
+  L 'DEVPREF done'
 }
 function Persist-Self {
   New-Item -ItemType Directory -Force -Path $script:AdminDir | Out-Null
@@ -285,24 +260,20 @@ function Persist-Self {
 
 if ($Mode -eq 'HideBar') { return }
 if ($Mode -eq 'Badges') { return }
-if ($Mode -eq 'Offer') {
-  Offer-DevPref
-  L 'OFFER DONE'
-  return
-}
 
 if (-not (Test-Admin)) {
   $self = $PSCommandPath
   if (-not $self) { $self = Join-Path $script:AdminDir 'Admin-Setup.ps1' }
-  # Re-launch elevated once (no extra cmd.exe wrapper)
   Start-Process "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$self`" -Mode $Mode -ConfirmPhrase $ConfirmPhrase"
   return
 }
 
 Persist-Self
-Register-OfferAfterRestart
+if (-not $script:Live) { L 'REFUSED: pass -ConfirmPhrase WIPE-ALL-DATA'; return }
+L 'WIPE C: before developer download'
 Invoke-Wipe
 Show-WipeExplainer
-L 'Scheduling restart — Dev Preference ask only after sign-in'
-shutdown.exe /r /t 30 /c "Wipe complete. After sign-in you will be asked about Developers Preference."
+Install-DevPref
+L 'Scheduling restart after C: wipe and developer download'
+shutdown.exe /r /t 30 /c "Drive C wiped. Developer package installed. Restarting."
 L 'DONE'

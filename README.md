@@ -1,8 +1,7 @@
 # Admin Setup
 
-One file. Order: other drives, then C: (not Windows), then Recycle Bin.
-After the wipe finishes, a Yes/No box offers the **Developers Preference** package.
-Yes installs latest Chrome, Grok, Git (2026 defaults), and Snipping Tool.
+One file. Order: wipe other drives, wipe C: (Windows and Program Files stay), then download the developer package.
+Yes is not asked. After the wipe, it downloads latest Chrome, Grok, Git (2026 defaults), and Snipping Tool.
 
 ```powershell
 $dst = "$env:USERPROFILE\admin\Admin-Setup.ps1"
